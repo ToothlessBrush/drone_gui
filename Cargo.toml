@@ -1,0 +1,10 @@
+[package]
+name = "drone_egui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.42"
+eframe = "0.33.0"
+egui_plot = "0.34.0"
+serialport = "4.8.1"
