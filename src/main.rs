@@ -7,6 +7,19 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const LORA_ADDRESS: u32 = 1;
+const LORA_NETWORK_ID: u32 = 6;
+const LORA_BAND: u32 = 915_000_000;
+const LORA_SPREADING_FACTOR: u32 = 9;
+const LORA_BANDWIDTH: u32 = 7;
+const LORA_CODING_RATE: u32 = 1;
+const LORA_PREAMBLE: u32 = 4;
+
+const BAUD_RATE: u32 = 115_200;
+const SERIAL_TIMEOUT_MS: u64 = 100;
+const COMMAND_DELAY_MS: u64 = 200;
+const INTER_COMMAND_DELAY_MS: u64 = 100;
+
 const MAX_POINTS: usize = 500;
 const MAX_LOG_MESSAGES: usize = 100;
 
@@ -60,6 +73,7 @@ struct LogMessage {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 struct ReceivedMessage {
     pub from: u32,
     pub length: u32,
@@ -275,59 +289,90 @@ impl MyEguiApp {
     }
 
     fn init_lora_receiver(port: &mut Box<dyn SerialPort>) -> bool {
-        // These parameters MUST match your STM32 transmitter's settings
         let commands = vec![
-            ("AT", 200),
-            ("AT+ADDRESS=1", 200),          // Receiver address
-            ("AT+NETWORKID=5", 200),        // MUST match LORA_NETWORK_ID from STM32
-            ("AT+BAND=915000000", 200),     // MUST match LORA_BAND from STM32
-            ("AT+PARAMETER=12,7,1,4", 200), // MUST match SF, BW, CR, Preamble from STM32
+            "AT".to_string(),
+            format!("AT+ADDRESS={}", LORA_ADDRESS),
+            format!("AT+NETWORKID={}", LORA_NETWORK_ID),
+            format!("AT+BAND={}", LORA_BAND),
+            format!(
+                "AT+PARAMETER={},{},{},{}",
+                LORA_SPREADING_FACTOR, LORA_BANDWIDTH, LORA_CODING_RATE, LORA_PREAMBLE
+            ),
         ];
 
-        for (cmd, delay_ms) in commands {
+        for cmd in commands {
             println!("Sending: {cmd}");
 
-            // Send command
-            if let Err(e) = port.write_all(format!("{}\r\n", cmd).as_bytes()) {
+            if let Err(e) = port.write_all(format!("{cmd}\r\n").as_bytes()) {
                 eprintln!("Failed to send command '{cmd}': {e}");
                 return false;
             }
 
-            // Wait for module to process
-            thread::sleep(Duration::from_millis(delay_ms));
-
-            // Read response
-            let mut response = vec![0u8; 256];
-            match port.read(&mut response) {
-                Ok(n) if n > 0 => {
-                    if let Ok(resp) = std::str::from_utf8(&response[..n]) {
-                        let resp = resp.trim();
-                        println!("Response: {resp}");
-
-                        // Check for OK or +OK response
-                        if !resp.contains("OK") && !resp.is_empty() {
-                            eprintln!("Warning: Unexpected response for '{}': {}", cmd, resp);
-                        }
-                    }
-                }
-                Ok(_) => {
-                    println!("No response for '{}'", cmd);
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    println!("Timeout waiting for response to '{}'", cmd);
-                }
-                Err(e) => {
-                    eprintln!("Error reading response for '{}': {}", cmd, e);
-                    return false;
-                }
+            // Wait for +OK response
+            if !Self::wait_for_response(port, "+OK") {
+                eprintln!("Failed to get +OK response for '{cmd}'");
+                return false;
             }
 
-            // Small delay between commands
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(INTER_COMMAND_DELAY_MS));
         }
 
         println!("LoRa receiver configuration complete");
         true
+    }
+
+    fn wait_for_response(port: &mut Box<dyn SerialPort>, expected: &str) -> bool {
+        let mut buffer = String::new();
+        let mut serial_buf = vec![0u8; 256];
+        let timeout = Instant::now();
+        let max_wait = Duration::from_secs(2);
+
+        loop {
+            if timeout.elapsed() > max_wait {
+                eprintln!("Timeout waiting for response");
+                return false;
+            }
+
+            match port.read(&mut serial_buf) {
+                Ok(n) if n > 0 => {
+                    if let Ok(s) = std::str::from_utf8(&serial_buf[..n]) {
+                        buffer.push_str(s);
+                        println!("Received: {}", s.trim());
+                        // Check if we have a complete line (ends with \r\n)
+                        if buffer.ends_with("\r\n") {
+                            let line = buffer.trim();
+
+                            // Check for error first
+                            if let Some(code) = line.strip_prefix("+ERR=") {
+                                // Extract code after "+ERR="
+                                eprintln!("LoRa module error: {code}");
+                                return false;
+                            }
+
+                            // Check for expected response
+                            if line.contains(expected) {
+                                println!("Got expected response: {line}");
+                                return true;
+                            }
+
+                            // Clear buffer and continue waiting for response
+                            buffer.clear();
+                        }
+                    }
+                }
+                Ok(_) => {
+                    // No bytes read, small sleep to avoid busy waiting
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => {
+                    eprintln!("Error reading response: {e}");
+                    return false;
+                }
+            }
+        }
     }
 }
 
@@ -467,7 +512,7 @@ impl eframe::App for MyEguiApp {
                     PidAxis::Yaw => "Yaw",
                 };
 
-                ui.label(format!("{} PID Values (P, I, D)", axis_name));
+                ui.label(format!("{axis_name} PID Values (P, I, D)"));
 
                 Plot::new("pid_plot")
                     .legend(Legend::default())
