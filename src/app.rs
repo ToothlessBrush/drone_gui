@@ -1,6 +1,7 @@
-use eframe::egui;
+use eframe::egui::{self, Event};
 use egui_plot::{Legend, Line, Plot};
-use std::sync::{mpsc, Arc, Mutex};
+use gilrs::Gilrs;
+use std::sync::{Arc, Mutex, mpsc};
 
 use crate::telemetry::{DataBuffer, PidAxis};
 use crate::uart::{self, UartCommand};
@@ -14,6 +15,7 @@ pub struct MyEguiApp {
     uart_sender: Option<mpsc::Sender<UartCommand>>,
     send_address: String,
     send_data: String,
+    gilrs: gilrs::Gilrs,
 }
 
 impl Default for MyEguiApp {
@@ -27,6 +29,7 @@ impl Default for MyEguiApp {
             uart_sender: None,
             send_address: "0".to_string(),
             send_data: String::new(),
+            gilrs: Gilrs::new().unwrap(),
         }
     }
 }
@@ -66,6 +69,13 @@ impl MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        while let Some(gilrs::Event {
+            id, event, time, ..
+        }) = self.gilrs.next_event()
+        {
+            println!("{:?} New event from {}: {:?}", time, id, event);
+        }
+
         ctx.request_repaint();
 
         egui::TopBottomPanel::top("controls").show(ctx, |ui| {
