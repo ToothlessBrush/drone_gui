@@ -11,7 +11,7 @@ bevy = { version = "0.15", default-features = false, features = [
     "bevy_core_pipeline",
     "bevy_pbr",
     "bevy_ui",
-    "x11",
+    "wayland",  # Better support for Raspberry Pi
 ] }
 bevy_egui = "0.31"
 egui_plot = "0.29"

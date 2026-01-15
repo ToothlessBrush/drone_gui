@@ -23,7 +23,7 @@ fn main() {
         ))
         .add_systems(Startup, drone_scene::setup_drone_scene)
         .add_systems(Update, drone_scene::update_drone_orientation)
-        .add_systems(Update, app::ui_system)
+        .add_systems(Update, app::ui_system.after(drone_scene::update_drone_orientation))
         .insert_resource(app::AppState::default())
         .insert_non_send_resource(app::GamepadState::default())
         .run();

@@ -1,10 +1,18 @@
 // Bevy 3D drone scene
 
 use bevy::prelude::*;
+use bevy::render::camera::RenderTarget;
+use bevy::render::render_resource::{
+    Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+};
 
 /// Marker component for the drone entity
 #[derive(Component)]
 pub struct Drone;
+
+/// Marker for the viewport camera
+#[derive(Component)]
+pub struct ViewportCamera;
 
 /// Component to store current drone orientation
 #[derive(Component)]
@@ -12,6 +20,12 @@ pub struct DroneOrientation {
     pub roll: f32,
     pub pitch: f32,
     pub yaw: f32,
+}
+
+/// Resource to hold the render target image handle
+#[derive(Resource)]
+pub struct ViewportImage {
+    pub handle: Handle<Image>,
 }
 
 impl Default for DroneOrientation {
@@ -29,7 +43,37 @@ pub fn setup_drone_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
+    // Create render target image for the viewport
+    // Using smaller resolution for better performance on Raspberry Pi
+    let size = Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+
+    let mut image = Image {
+        texture_descriptor: TextureDescriptor {
+            label: None,
+            size,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Bgra8UnormSrgb,
+            mip_level_count: 1,
+            sample_count: 1,
+            usage: TextureUsages::TEXTURE_BINDING
+                | TextureUsages::COPY_DST
+                | TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        },
+        ..default()
+    };
+    image.resize(size);
+
+    let image_handle = images.add(image);
+    commands.insert_resource(ViewportImage {
+        handle: image_handle.clone(),
+    });
     // Colors
     let body_color = Color::srgb(0.5, 0.5, 0.5);
     let arm_color = Color::srgb(0.4, 0.4, 0.4);
@@ -61,7 +105,10 @@ pub fn setup_drone_scene(
             Drone,
             DroneOrientation::default(),
             Transform::from_xyz(0.0, 0.0, 0.0),
+            GlobalTransform::default(),
             Visibility::default(),
+            InheritedVisibility::default(),
+            ViewVisibility::default(),
         ))
         .id();
 
@@ -131,10 +178,15 @@ pub fn setup_drone_scene(
         commands.entity(drone_entity).add_child(propeller);
     }
 
-    // Camera
+    // Viewport camera - renders to texture for egui display
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            target: RenderTarget::Image(image_handle.clone()),
+            ..default()
+        },
         Transform::from_xyz(0.0, 1.5, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ViewportCamera,
     ));
 
     // Directional light
