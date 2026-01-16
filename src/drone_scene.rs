@@ -1,5 +1,6 @@
 // Bevy 3D drone scene
 
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::camera::RenderTarget;
 use bevy::render::render_resource::{
@@ -171,8 +172,7 @@ pub fn setup_drone_scene(
             .spawn((
                 Mesh3d(meshes.add(Cylinder::new(0.12, 0.01))),
                 MeshMaterial3d(motor_material.clone()),
-                Transform::from_translation(prop_pos)
-                    .with_rotation(Quat::from_rotation_x(std::f32::consts::PI / 2.0)),
+                Transform::from_translation(prop_pos),
             ))
             .id();
         commands.entity(drone_entity).add_child(propeller);
@@ -202,6 +202,51 @@ pub fn setup_drone_scene(
             0.0,
         )),
     ));
+
+    commands.spawn((
+        Mesh3d(meshes.add(create_grid_mesh(10.0, 20))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(0.5, 0.5, 0.5, 0.3),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, -0.5, 0.0),
+    ));
+}
+
+// Generate grid mesh
+fn create_grid_mesh(size: f32, divisions: usize) -> Mesh {
+    let mut positions = Vec::new();
+    let mut colors = Vec::new();
+    let step = size / divisions as f32;
+
+    for i in 0..=divisions {
+        let offset = i as f32 * step - size / 2.0;
+
+        // Lines along X
+        positions.push([offset, 0.0, -size / 2.0]);
+        positions.push([offset, 0.0, size / 2.0]);
+
+        // Lines along Z
+        positions.push([-size / 2.0, 0.0, offset]);
+        positions.push([size / 2.0, 0.0, offset]);
+
+        // Fade color based on distance from center
+        let fade = 1.0 - (i as f32 / divisions as f32);
+        let alpha = fade * 0.3;
+        colors.push([0.5, 0.5, 0.5, alpha]);
+        colors.push([0.5, 0.5, 0.5, alpha]);
+        colors.push([0.5, 0.5, 0.5, alpha]);
+        colors.push([0.5, 0.5, 0.5, alpha]);
+    }
+
+    Mesh::new(
+        bevy::render::mesh::PrimitiveTopology::LineList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
 }
 
 /// System to update drone orientation from telemetry data

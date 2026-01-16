@@ -5,14 +5,7 @@ edition = "2024"
 
 [dependencies]
 chrono = "0.4.42"
-bevy = { version = "0.15", default-features = false, features = [
-    "bevy_winit",
-    "bevy_render",
-    "bevy_core_pipeline",
-    "bevy_pbr",
-    "bevy_ui",
-    "wayland",  # Better support for Raspberry Pi
-] }
+bevy = "0.15"
 bevy_egui = "0.31"
 egui_plot = "0.29"
 gilrs = "0.11.0"

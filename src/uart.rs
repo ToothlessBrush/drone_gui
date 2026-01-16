@@ -1,5 +1,5 @@
 use serialport::SerialPort;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,34 +14,29 @@ pub enum UartCommand {
 pub fn start_uart_thread(
     port_path: String,
     data_buffer: Arc<Mutex<DataBuffer>>,
-) -> mpsc::Sender<UartCommand> {
+) -> Result<mpsc::Sender<UartCommand>, String> {
+    let mut port = serialport::new(&port_path, BAUD_RATE)
+        .timeout(Duration::from_millis(SERIAL_TIMEOUT_MS))
+        .open()
+        .map_err(|e| format!("failed to open port '{}': {}", port_path, e))?;
+
+    if !init_lora_receiver(&mut port) {
+        return Err("Failed to initialize LoRa".to_string());
+    }
+
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        uart_loop(port_path, data_buffer, rx);
+        uart_loop(port, data_buffer, rx);
     });
-    tx
+
+    Ok(tx)
 }
 
 fn uart_loop(
-    port_path: String,
+    mut port: Box<dyn SerialPort>,
     data_buffer: Arc<Mutex<DataBuffer>>,
     rx: mpsc::Receiver<UartCommand>,
 ) {
-    let mut port = match serialport::new(&port_path, BAUD_RATE)
-        .timeout(Duration::from_millis(SERIAL_TIMEOUT_MS))
-        .open()
-    {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-
-    println!("Initializing LoRa receiver module...");
-    if !init_lora_receiver(&mut port) {
-        eprintln!("Failed to initialize LoRa receiver module!");
-        return;
-    }
-    println!("LoRa receiver initialized successfully");
-
     let mut buffer = String::new();
     let mut serial_buf = vec![0u8; 256];
 
@@ -69,7 +64,10 @@ fn send_lora_data(port: &mut Box<dyn SerialPort>, address: u16, data: &str) {
 
     // Check maximum payload length
     if payload_length > 240 {
-        eprintln!("Payload length {} exceeds maximum of 240 bytes", payload_length);
+        eprintln!(
+            "Payload length {} exceeds maximum of 240 bytes",
+            payload_length
+        );
         return;
     }
 
@@ -83,7 +81,10 @@ fn send_lora_data(port: &mut Box<dyn SerialPort>, address: u16, data: &str) {
 
     // Wait for +OK response
     if wait_for_response(port, "+OK") {
-        println!("✓ Received +OK - Data sent successfully to address {}: '{}'", address, data);
+        println!(
+            "✓ Received +OK - Data sent successfully to address {}: '{}'",
+            address, data
+        );
     } else {
         eprintln!("Failed to send data to address {}", address);
     }

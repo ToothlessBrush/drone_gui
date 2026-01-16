@@ -27,6 +27,7 @@ pub struct AppState {
     pub video_connected: bool,
     pub video_device_path: String,
     pub viewport_texture_id: Option<egui::TextureId>,
+    pub available_ports: Vec<String>,
 }
 
 // Gilrs is not Sync, so we keep it as a NonSend resource
@@ -37,10 +38,23 @@ pub struct GamepadState {
 
 impl Default for AppState {
     fn default() -> Self {
+        let available_ports = serialport::available_ports()
+            .map(|ports| ports.iter().map(|p| p.port_name.clone()).collect())
+            .unwrap_or_else(|_| vec![]);
+
+        let default_port = available_ports.first().cloned().unwrap_or_else(|| {
+            if cfg!(windows) {
+                "COM3".to_string()
+            } else {
+                "/dev/ttyAMA1".to_string()
+            }
+        });
+
         Self {
             data_buffer: Arc::new(Mutex::new(DataBuffer::new())),
             serial_connected: false,
-            port_path: "/dev/ttyAMA1".to_string(),
+            port_path: default_port,
+            available_ports,
             selected_pid_axis: PidAxis::Roll,
             auto_scroll_logs: true,
             uart_sender: None,
@@ -64,15 +78,25 @@ impl Default for GamepadState {
 }
 
 impl AppState {
-    fn start_uart_thread(&mut self) {
+    fn start_uart_thread(&mut self) -> Result<(), String> {
         if self.serial_connected {
-            return;
+            return Ok(());
         }
+
         let port_path = self.port_path.clone();
         let data_buffer = Arc::clone(&self.data_buffer);
-        let sender = uart::start_uart_thread(port_path, data_buffer);
-        self.uart_sender = Some(sender);
-        self.serial_connected = true;
+
+        match uart::start_uart_thread(port_path, data_buffer) {
+            Ok(sender) => {
+                self.uart_sender = Some(sender);
+                self.serial_connected = true;
+                Ok(())
+            }
+            Err(e) => {
+                self.serial_connected = false;
+                Err(e)
+            }
+        }
     }
 
     fn send_data(&self) {
@@ -132,7 +156,10 @@ pub fn ui_system(
         // Use bevy_egui's add_image to register the Bevy image handle
         let egui_texture_id = contexts.add_image(viewport_image.handle.clone());
         state.viewport_texture_id = Some(egui_texture_id);
-        println!("Registered viewport texture with egui: {:?}", egui_texture_id);
+        println!(
+            "Registered viewport texture with egui: {:?}",
+            egui_texture_id
+        );
     }
 
     // Update video texture if new frame is available
@@ -157,13 +184,13 @@ pub fn ui_system(
     }
 
     // Update drone orientation from telemetry
-    if let Ok(buffer) = state.data_buffer.lock() {
-        if let Some(latest) = buffer.data.back() {
-            for mut orientation in drone_query.iter_mut() {
-                orientation.roll = latest.roll;
-                orientation.pitch = latest.pitch;
-                orientation.yaw = latest.yaw;
-            }
+    if let Ok(buffer) = state.data_buffer.lock()
+        && let Some(latest) = buffer.data.back()
+    {
+        for mut orientation in drone_query.iter_mut() {
+            orientation.roll = latest.roll;
+            orientation.pitch = latest.pitch;
+            orientation.yaw = latest.yaw;
         }
     }
 
@@ -184,17 +211,38 @@ pub fn ui_system(
 
                 // Serial connection
                 ui.label("Serial Port:");
-                ui.text_edit_singleline(&mut state.port_path);
+                egui::ComboBox::from_id_salt("serial_port_select")
+                    .selected_text(&state.port_path)
+                    .show_ui(ui, |ui| {
+                        let available = state.available_ports.clone();
+                        for port in &available {
+                            ui.selectable_value(&mut state.port_path, port.clone(), port);
+                        }
+                        // Allow manual entry if not in list
+                        ui.separator();
+                        ui.label("Or enter manually:");
+                        ui.text_edit_singleline(&mut state.port_path);
+                    });
                 if ui
                     .button(if state.serial_connected {
-                        "Connected ✓"
+                        "Connected"
                     } else {
                         "Connect"
                     })
                     .clicked()
+                    && !state.serial_connected
                 {
-                    if !state.serial_connected {
-                        state.start_uart_thread();
+                    match state.start_uart_thread() {
+                        Ok(()) => {
+                            // Success notification already in uart module
+                        }
+                        Err(e) => {
+                            eprintln!("Serial connection failed: {}", e);
+                            // Add error to data buffer so user sees it in logs
+                            if let Ok(mut buffer) = state.data_buffer.lock() {
+                                buffer.push_log(format!("Serial Error: {}", e));
+                            }
+                        }
                     }
                 }
 
@@ -205,15 +253,14 @@ pub fn ui_system(
                 ui.text_edit_singleline(&mut state.video_device_path);
                 if ui
                     .button(if state.video_connected {
-                        "Connected ✓"
+                        "Connected"
                     } else {
                         "Connect"
                     })
                     .clicked()
+                    && !state.video_connected
                 {
-                    if !state.video_connected {
-                        state.start_video_thread();
-                    }
+                    state.start_video_thread();
                 }
 
                 ui.separator();
@@ -265,6 +312,30 @@ pub fn ui_system(
                                 } else {
                                     ui.allocate_space(egui::vec2(viewport_width, viewport_height));
                                     ui.label("Loading 3D view...");
+                                }
+
+                                ui.label("Current Values");
+                                let buffer = state.data_buffer.lock().unwrap();
+                                if let Some(latest) = buffer.data.back() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("Roll: {:.2}°", latest.roll.to_degrees()));
+                                        ui.separator();
+                                        ui.label(format!(
+                                            "Pitch: {:.2}°",
+                                            latest.pitch.to_degrees()
+                                        ));
+                                        ui.separator();
+                                        ui.label(format!("Yaw: {:.2}°", latest.yaw.to_degrees()));
+                                        ui.separator();
+                                        ui.label(format!("Alt: {:.2}m", latest.altitude));
+                                        ui.separator();
+                                        ui.label(format!(
+                                            "Battery: {:.2}V",
+                                            latest.battery_voltage
+                                        ));
+                                    });
+                                } else {
+                                    ui.label("No data received yet");
                                 }
                             });
                         });
@@ -381,29 +452,6 @@ pub fn ui_system(
                                         .color(Color32::from_rgb(100, 100, 255)),
                                 );
                             });
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Current values display
-                    ui.group(|ui| {
-                        ui.label("Current Values");
-                        let buffer = state.data_buffer.lock().unwrap();
-                        if let Some(latest) = buffer.data.back() {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("Roll: {:.2}°", latest.roll));
-                                ui.separator();
-                                ui.label(format!("Pitch: {:.2}°", latest.pitch));
-                                ui.separator();
-                                ui.label(format!("Yaw: {:.2}°", latest.yaw));
-                                ui.separator();
-                                ui.label(format!("Alt: {:.2}m", latest.altitude));
-                                ui.separator();
-                                ui.label(format!("Battery: {:.2}V", latest.battery_voltage));
-                            });
-                        } else {
-                            ui.label("No data received yet");
-                        }
                     });
                 }); // End of scroll area
         });
