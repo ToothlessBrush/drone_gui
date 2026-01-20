@@ -5,10 +5,12 @@ use std::time::{Duration, Instant};
 
 use crate::config::*;
 use crate::parser::{parse_log, parse_rcv, parse_telemetry};
+use crate::protocol::{CommandType, CommandUpdatePid};
 use crate::telemetry::DataBuffer;
 
 pub enum UartCommand {
     Send { address: u16, data: String },
+    Disconnect,
 }
 
 pub fn start_uart_thread(
@@ -43,18 +45,27 @@ fn uart_loop(
     loop {
         // Check for outgoing commands (non-blocking)
         if let Ok(cmd) = rx.try_recv() {
+            if matches!(cmd, UartCommand::Disconnect) {
+                println!("Disconnecting from serial port");
+                drop(port);
+                break;
+            }
             handle_uart_command(&mut port, cmd);
         }
 
         // Handle incoming serial data
         handle_serial_read(&mut port, &mut buffer, &mut serial_buf, &data_buffer);
     }
+    println!("UART thread exited");
 }
 
 fn handle_uart_command(port: &mut Box<dyn SerialPort>, cmd: UartCommand) {
     match cmd {
         UartCommand::Send { address, data } => {
             send_lora_data(port, address, &data);
+        }
+        UartCommand::Disconnect => {
+            // Already handled in uart_loop
         }
     }
 }
@@ -125,6 +136,7 @@ fn process_line(line: &str, data_buffer: &Arc<Mutex<DataBuffer>>) {
         return;
     };
 
+    // Parse string-based telemetry and log messages
     if let Some(telem) = parse_telemetry(&rcv.message) {
         buf.push(telem);
     } else if let Some(log_msg) = parse_log(&rcv.message) {
@@ -218,3 +230,81 @@ fn wait_for_response(port: &mut Box<dyn SerialPort>, expected: &str) -> bool {
         }
     }
 }
+
+// Helper functions for sending commands from UI
+// Uses ASCII string format to avoid CSV parsing issues in +RCV messages
+pub fn send_command_start(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
+    tx.send(UartCommand::Send {
+        address,
+        data: CommandType::Start.to_ascii().to_string(),
+    })
+    .map_err(|e| format!("Failed to send START command: {}", e))
+}
+
+pub fn send_command_stop(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
+    tx.send(UartCommand::Send {
+        address,
+        data: CommandType::Stop.to_ascii().to_string(),
+    })
+    .map_err(|e| format!("Failed to send STOP command: {}", e))
+}
+
+pub fn send_command_emergency_stop(
+    tx: &mpsc::Sender<UartCommand>,
+    address: u16,
+) -> Result<(), String> {
+    tx.send(UartCommand::Send {
+        address,
+        data: CommandType::EmergencyStop.to_ascii().to_string(),
+    })
+    .map_err(|e| format!("Failed to send EMERGENCY_STOP command: {}", e))
+}
+
+pub fn send_command_calibrate(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
+    tx.send(UartCommand::Send {
+        address,
+        data: CommandType::Calibrate.to_ascii().to_string(),
+    })
+    .map_err(|e| format!("Failed to send CALIBRATE command: {}", e))
+}
+
+pub fn send_command_reset(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
+    tx.send(UartCommand::Send {
+        address,
+        data: CommandType::Reset.to_ascii().to_string(),
+    })
+    .map_err(|e| format!("Failed to send RESET command: {}", e))
+}
+
+pub fn send_command_set_throttle(
+    tx: &mpsc::Sender<UartCommand>,
+    address: u16,
+    throttle_value: f32,
+) -> Result<(), String> {
+    tx.send(UartCommand::Send {
+        address,
+        data: CommandType::SetThrottle(throttle_value)
+            .to_ascii()
+            .to_string(),
+    })
+    .map_err(|e| format!("Failed to send SET_THROTTLE command: {}", e))
+}
+
+// pub fn send_command_update_pid(
+//     tx: &mpsc::Sender<UartCommand>,
+//     address: u16,
+//     axis: u8,
+//     kp: f32,
+//     ki: f32,
+//     kd: f32,
+// ) -> Result<(), String> {
+//     let cmd = CommandUpdatePid::new(axis, kp, ki, kd);
+//     let bytes = cmd.to_bytes();
+//
+//     // Convert bytes to hex string for ASCII transmission
+//     let hex_string: String = bytes.iter().map(|b| format!("{:02X}", b)).collect();
+//     let data = format!("FC:UPDATE_PID:{}", hex_string);
+//
+//     tx.send(UartCommand::Send { address, data })
+//         .map_err(|e| format!("Failed to send UPDATE_PID command: {}", e))
+// }

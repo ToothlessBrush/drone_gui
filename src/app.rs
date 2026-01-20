@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_egui::egui::Slider;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot};
 use gilrs::Gilrs;
@@ -8,6 +9,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use egui::Color32;
 
 use crate::drone_scene::{Drone, DroneOrientation, ViewportImage};
+use crate::pid_config::{PidConfig, PidConfigHistory};
 use crate::telemetry::{DataBuffer, PidAxis};
 use crate::uart::{self, UartCommand};
 use crate::video::{self, SharedVideoFrame};
@@ -28,6 +30,13 @@ pub struct AppState {
     pub video_device_path: String,
     pub viewport_texture_id: Option<egui::TextureId>,
     pub available_ports: Vec<String>,
+    pub pid_config: PidConfig,
+    pub pid_config_history: PidConfigHistory,
+    pub pid_config_path: String,
+    pub pid_history_path: String,
+    pub show_pid_tuning: bool,
+    pub pid_history_note: String,
+    pub base_throttle: f32,
 }
 
 // Gilrs is not Sync, so we keep it as a NonSend resource
@@ -50,6 +59,17 @@ impl Default for AppState {
             }
         });
 
+        let pid_config_path = "pid_config.json".to_string();
+        let pid_history_path = "pid_history.json".to_string();
+
+        // Load PID config from file, or use default
+        let pid_config =
+            PidConfig::load_from_file(&pid_config_path).unwrap_or_else(|_| PidConfig::default());
+
+        // Load PID history from file, or use default
+        let pid_config_history = PidConfigHistory::load_from_file(&pid_history_path)
+            .unwrap_or_else(|_| PidConfigHistory::default());
+
         Self {
             data_buffer: Arc::new(Mutex::new(DataBuffer::new())),
             serial_connected: false,
@@ -65,6 +85,13 @@ impl Default for AppState {
             video_connected: false,
             video_device_path: "/dev/video2".to_string(),
             viewport_texture_id: None,
+            pid_config,
+            pid_config_history,
+            pid_config_path,
+            pid_history_path,
+            show_pid_tuning: false,
+            pid_history_note: String::new(),
+            base_throttle: 0.0,
         }
     }
 }
@@ -94,9 +121,18 @@ impl AppState {
             }
             Err(e) => {
                 self.serial_connected = false;
+                self.uart_sender = None;
                 Err(e)
             }
         }
+    }
+
+    fn disconnect_uart(&mut self) {
+        if let Some(sender) = &self.uart_sender {
+            let _ = sender.send(UartCommand::Disconnect);
+        }
+        self.uart_sender = None;
+        self.serial_connected = false;
     }
 
     fn send_data(&self) {
@@ -223,24 +259,23 @@ pub fn ui_system(
                         ui.label("Or enter manually:");
                         ui.text_edit_singleline(&mut state.port_path);
                     });
-                if ui
-                    .button(if state.serial_connected {
-                        "Connected"
-                    } else {
-                        "Connect"
-                    })
-                    .clicked()
-                    && !state.serial_connected
-                {
-                    match state.start_uart_thread() {
-                        Ok(()) => {
-                            // Success notification already in uart module
-                        }
-                        Err(e) => {
-                            eprintln!("Serial connection failed: {}", e);
-                            // Add error to data buffer so user sees it in logs
-                            if let Ok(mut buffer) = state.data_buffer.lock() {
-                                buffer.push_log(format!("Serial Error: {}", e));
+
+                if state.serial_connected {
+                    if ui.button("Disconnect").clicked() {
+                        state.disconnect_uart();
+                    }
+                } else {
+                    if ui.button("Connect").clicked() {
+                        match state.start_uart_thread() {
+                            Ok(()) => {
+                                // Success notification already in uart module
+                            }
+                            Err(e) => {
+                                eprintln!("Serial connection failed: {}", e);
+                                // Add error to data buffer so user sees it in logs
+                                if let Ok(mut buffer) = state.data_buffer.lock() {
+                                    buffer.push_log(format!("Serial Error: {}", e));
+                                }
                             }
                         }
                     }
@@ -276,6 +311,11 @@ pub fn ui_system(
 
                 ui.separator();
                 ui.checkbox(&mut state.auto_scroll_logs, "Auto-scroll logs");
+
+                ui.separator();
+                if ui.button("PID Tuning").clicked() {
+                    state.show_pid_tuning = !state.show_pid_tuning;
+                }
             });
         });
 
@@ -294,15 +334,17 @@ pub fn ui_system(
             egui::ScrollArea::both()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    // Video feed and logs
-                    ui.horizontal(|ui| {
+                    // Horizontal layout: View | Commands | Log
+                    ui.horizontal_top(|ui| {
                         let available_width = ui.available_width();
+                        let section_width = available_width / 3.0;
 
-                        // 3D Viewport
+                        // 3D Viewport Section
                         ui.group(|ui| {
                             ui.vertical(|ui| {
+                                ui.set_width(section_width - 20.0);
                                 ui.label("3D Drone View");
-                                let viewport_width = (available_width * 0.4).min(320.0);
+                                let viewport_width = (section_width - 30.0).min(250.0);
                                 let viewport_height = viewport_width * 0.75; // Match render target aspect
                                 if let Some(texture_id) = state.viewport_texture_id {
                                     ui.image(egui::load::SizedTexture::new(
@@ -314,48 +356,201 @@ pub fn ui_system(
                                     ui.label("Loading 3D view...");
                                 }
 
-                                ui.label("Current Values");
-                                let buffer = state.data_buffer.lock().unwrap();
-                                if let Some(latest) = buffer.data.back() {
-                                    ui.horizontal(|ui| {
-                                        ui.label(format!("Roll: {:.2}°", latest.roll.to_degrees()));
-                                        ui.separator();
-                                        ui.label(format!(
-                                            "Pitch: {:.2}°",
-                                            latest.pitch.to_degrees()
-                                        ));
-                                        ui.separator();
-                                        ui.label(format!("Yaw: {:.2}°", latest.yaw.to_degrees()));
-                                        ui.separator();
-                                        ui.label(format!("Alt: {:.2}m", latest.altitude));
-                                        ui.separator();
-                                        ui.label(format!(
-                                            "Battery: {:.2}V",
-                                            latest.battery_voltage
-                                        ));
+                                ui.add_space(5.0);
+
+                                // Current values in a styled box
+                                egui::Frame::group(ui.style())
+                                    .inner_margin(egui::Margin::same(8.0))
+                                    .show(ui, |ui| {
+                                        let buffer = state.data_buffer.lock().unwrap();
+                                        if let Some(latest) = buffer.data.back() {
+                                            let box_width = 120.0; // Fixed width for all attitude boxes
+                                            ui.vertical(|ui| {
+                                                // Roll with red background
+                                                ui.scope(|ui| {
+                                                    egui::Frame::none()
+                                                        .inner_margin(egui::Margin::symmetric(
+                                                            6.0, 4.0,
+                                                        ))
+                                                        .fill(Color32::from_rgb(80, 20, 20))
+                                                        .rounding(egui::Rounding::same(4.0))
+                                                        .show(ui, |ui| {
+                                                            ui.set_width(box_width);
+                                                            ui.label(
+                                                                egui::RichText::new(format!(
+                                                                    "Roll: {:.2}°",
+                                                                    latest.roll.to_degrees()
+                                                                ))
+                                                                .color(Color32::from_rgb(
+                                                                    255, 100, 100,
+                                                                ))
+                                                                .monospace(),
+                                                            );
+                                                        });
+                                                });
+
+                                                // Pitch with green background
+                                                ui.scope(|ui| {
+                                                    egui::Frame::none()
+                                                        .inner_margin(egui::Margin::symmetric(
+                                                            6.0, 4.0,
+                                                        ))
+                                                        .fill(Color32::from_rgb(20, 80, 20))
+                                                        .rounding(egui::Rounding::same(4.0))
+                                                        .show(ui, |ui| {
+                                                            ui.set_width(box_width);
+                                                            ui.label(
+                                                                egui::RichText::new(format!(
+                                                                    "Pitch: {:.2}°",
+                                                                    latest.pitch.to_degrees()
+                                                                ))
+                                                                .color(Color32::from_rgb(
+                                                                    100, 255, 100,
+                                                                ))
+                                                                .monospace(),
+                                                            );
+                                                        });
+                                                });
+
+                                                // Yaw with blue background
+                                                ui.scope(|ui| {
+                                                    egui::Frame::none()
+                                                        .inner_margin(egui::Margin::symmetric(
+                                                            6.0, 4.0,
+                                                        ))
+                                                        .fill(Color32::from_rgb(20, 20, 80))
+                                                        .rounding(egui::Rounding::same(4.0))
+                                                        .show(ui, |ui| {
+                                                            ui.set_width(box_width);
+                                                            ui.label(
+                                                                egui::RichText::new(format!(
+                                                                    "Yaw: {:.2}°",
+                                                                    latest.yaw.to_degrees()
+                                                                ))
+                                                                .color(Color32::from_rgb(
+                                                                    100, 100, 255,
+                                                                ))
+                                                                .monospace(),
+                                                            );
+                                                        });
+                                                });
+                                            });
+
+                                            ui.add_space(4.0);
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.label(format!("Alt: {:.2}m", latest.altitude));
+                                                ui.separator();
+                                                ui.label(format!(
+                                                    "Battery: {:.2}V",
+                                                    latest.battery_voltage
+                                                ));
+                                            });
+                                        } else {
+                                            ui.label("No data received yet");
+                                        }
                                     });
+                            });
+                        });
+
+                        // Flight Controller Commands Section
+                        ui.group(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width - 20.0);
+                                ui.heading("Flight Controller Commands");
+                                ui.add_space(5.0);
+
+                                if let Some(sender) = &state.uart_sender {
+                                    if let Ok(address) = state.send_address.parse::<u16>() {
+                                        if ui.button("Start").clicked() {
+                                            if let Err(e) =
+                                                uart::send_command_start(sender, address)
+                                            {
+                                                eprintln!("{}", e);
+                                            }
+                                        }
+                                        ui.label("Arm and start motors");
+                                        ui.add_space(3.0);
+
+                                        if ui.button("Stop").clicked() {
+                                            if let Err(e) = uart::send_command_stop(sender, address)
+                                            {
+                                                eprintln!("{}", e);
+                                            }
+                                        }
+                                        ui.label("Disarm and stop motors normally");
+                                        ui.add_space(3.0);
+
+                                        if ui.button("Emergency Stop").clicked() {
+                                            if let Err(e) =
+                                                uart::send_command_emergency_stop(sender, address)
+                                            {
+                                                eprintln!("{}", e);
+                                            }
+                                        }
+                                        ui.label("Immediate emergency shutdown");
+                                        ui.add_space(3.0);
+
+                                        if ui.button("Calibrate").clicked() {
+                                            if let Err(e) =
+                                                uart::send_command_calibrate(sender, address)
+                                            {
+                                                eprintln!("{}", e);
+                                            }
+                                        }
+                                        ui.label("Calibrate IMU sensors");
+                                        ui.add_space(3.0);
+
+                                        if ui.button("Reset").clicked() {
+                                            if let Err(e) =
+                                                uart::send_command_reset(sender, address)
+                                            {
+                                                eprintln!("{}", e);
+                                            }
+                                        }
+                                        ui.label("Reset flight controller state");
+
+                                        ui.separator();
+                                        ui.label("Base Throttle");
+                                        let mut throttle_clone = state.base_throttle;
+                                        let slider_response =
+                                            ui.add(Slider::new(&mut throttle_clone, 0.0..=1.0));
+                                        if slider_response.drag_stopped() {
+                                            if let Err(e) = uart::send_command_set_throttle(
+                                                sender,
+                                                address,
+                                                state.base_throttle,
+                                            ) {
+                                                eprintln!("Failed to send throttle: {}", e);
+                                            } else {
+                                                println!(
+                                                    "Sent throttle: {:.2}",
+                                                    state.base_throttle
+                                                );
+                                            }
+                                        }
+                                        state.base_throttle = throttle_clone;
+                                    } else {
+                                        ui.label("Enter valid address to enable commands");
+                                    }
                                 } else {
-                                    ui.label("No data received yet");
+                                    ui.label("Connect to serial port to enable commands");
                                 }
                             });
                         });
 
-                        ui.separator();
-
-                        // System logs
+                        // System Logs Section
                         ui.group(|ui| {
                             ui.vertical(|ui| {
+                                ui.set_width(section_width - 20.0);
                                 let buffer = state.data_buffer.lock().unwrap();
                                 ui.label(format!("System Logs ({} messages)", buffer.logs.len()));
 
-                                let log_width = available_width * 0.5;
                                 egui::ScrollArea::vertical()
                                     .max_height(200.0)
                                     .id_salt("system_logs")
                                     .auto_shrink([false; 2])
                                     .stick_to_bottom(auto_scroll)
                                     .show(ui, |ui| {
-                                        ui.set_min_width(log_width);
                                         for log in buffer.logs.iter() {
                                             ui.horizontal(|ui| {
                                                 ui.label(format!(
@@ -369,8 +564,6 @@ pub fn ui_system(
                             });
                         });
                     });
-
-                    ui.add_space(10.0);
 
                     // Attitude Plot - Graph only (3D view is in the separate Bevy 3D scene)
                     ui.group(|ui| {
@@ -399,8 +592,6 @@ pub fn ui_system(
                                 );
                             });
                     });
-
-                    ui.add_space(10.0);
 
                     // PID Selection and Plot
                     ui.group(|ui| {

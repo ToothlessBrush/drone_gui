@@ -2,6 +2,8 @@ mod app;
 mod config;
 mod drone_scene;
 mod parser;
+mod pid_config;
+mod protocol;
 mod telemetry;
 mod uart;
 mod video;

@@ -2017,6 +2017,8 @@ dependencies = [
  "ffmpeg-the-third",
  "gilrs",
  "image",
+ "serde",
+ "serde_json",
  "serialport",
 ]
 

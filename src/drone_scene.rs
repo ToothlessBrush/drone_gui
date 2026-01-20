@@ -249,18 +249,24 @@ fn create_grid_mesh(size: f32, divisions: usize) -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
 }
 
-/// System to update drone orientation from telemetry data
+/// System to update drone orientation from telemetry data with smooth interpolation
 pub fn update_drone_orientation(
     mut query: Query<(&mut Transform, &DroneOrientation), With<Drone>>,
+    time: Res<Time>,
 ) {
     for (mut transform, orientation) in query.iter_mut() {
-        // Convert degrees to radians and apply rotation
-        let rotation = Quat::from_euler(
+        // Convert degrees to radians and calculate target rotation
+        let target_rotation = Quat::from_euler(
             EulerRot::YXZ,
-            orientation.yaw.to_radians(),
-            orientation.pitch.to_radians(),
-            orientation.roll.to_radians(),
+            orientation.yaw,
+            orientation.pitch,
+            orientation.roll,
         );
-        transform.rotation = rotation;
+
+        // Use slerp for smooth interpolation
+        // Adjust the interpolation speed (higher = faster, 0.1 = smooth)
+        let interpolation_speed = 10.0;
+        let t = (interpolation_speed * time.delta_secs()).min(1.0);
+        transform.rotation = transform.rotation.slerp(target_rotation, t);
     }
 }
