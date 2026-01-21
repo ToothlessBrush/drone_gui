@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::*;
 use crate::parser::{parse_log, parse_rcv, parse_telemetry};
-use crate::protocol::{CommandType, CommandUpdatePid};
+use crate::protocol::CommandType;
 use crate::telemetry::DataBuffer;
 
 pub enum UartCommand {
@@ -119,6 +119,16 @@ fn process_bytes(buffer: &mut String, bytes: &[u8], data_buffer: &Arc<Mutex<Data
         return;
     };
     buffer.push_str(s);
+
+    // If we see +RCV in the buffer, it means a new message is starting
+    // Clear any incomplete previous message by keeping only from the last +RCV
+    if let Some(last_rcv_pos) = buffer.rfind("+RCV") {
+        // If +RCV is not at the start, we have garbage before it - discard it
+        if last_rcv_pos > 0 {
+            let new_buffer = buffer[last_rcv_pos..].to_string();
+            *buffer = new_buffer;
+        }
+    }
 
     while let Some(pos) = buffer.find('\n') {
         let line = buffer.drain(..=pos).collect::<String>();
