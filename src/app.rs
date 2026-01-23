@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, mpsc};
 use egui::Color32;
 
 use crate::drone_scene::{Drone, DroneOrientation, ViewportImage};
-use crate::pid_config::{PidConfig, PidConfigHistory};
 use crate::telemetry::{DataBuffer, PidAxis};
 use crate::uart::{self, UartCommand};
 use crate::video::{self, SharedVideoFrame};
@@ -30,12 +29,7 @@ pub struct AppState {
     pub video_device_path: String,
     pub viewport_texture_id: Option<egui::TextureId>,
     pub available_ports: Vec<String>,
-    pub pid_config: PidConfig,
-    pub pid_config_history: PidConfigHistory,
-    pub pid_config_path: String,
-    pub pid_history_path: String,
     pub show_pid_tuning: bool,
-    pub pid_history_note: String,
     pub base_throttle: f32,
 }
 
@@ -59,17 +53,6 @@ impl Default for AppState {
             }
         });
 
-        let pid_config_path = "pid_config.json".to_string();
-        let pid_history_path = "pid_history.json".to_string();
-
-        // Load PID config from file, or use default
-        let pid_config =
-            PidConfig::load_from_file(&pid_config_path).unwrap_or_else(|_| PidConfig::default());
-
-        // Load PID history from file, or use default
-        let pid_config_history = PidConfigHistory::load_from_file(&pid_history_path)
-            .unwrap_or_else(|_| PidConfigHistory::default());
-
         Self {
             data_buffer: Arc::new(Mutex::new(DataBuffer::new())),
             serial_connected: false,
@@ -85,12 +68,7 @@ impl Default for AppState {
             video_connected: false,
             video_device_path: "/dev/video2".to_string(),
             viewport_texture_id: None,
-            pid_config,
-            pid_config_history,
-            pid_config_path,
-            pid_history_path,
             show_pid_tuning: false,
-            pid_history_note: String::new(),
             base_throttle: 0.0,
         }
     }
@@ -331,32 +309,31 @@ pub fn ui_system(
             let auto_scroll = state.auto_scroll_logs;
 
             // Wrap everything in a scroll area
-            egui::ScrollArea::both()
+            egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     // Horizontal layout: View | Commands | Log
                     ui.horizontal_top(|ui| {
                         let available_width = ui.available_width();
-                        let section_width = available_width / 3.0;
+                        let left_width = available_width * 0.25; // 25% for 3D view                                                                                                                                                                                                               
+                        let middle_width = available_width * 0.20; // 40% for commands                                                                                                                                                                                                              
+                        let right_width = available_width * 0.55; // 30% for logs 
 
                         // 3D Viewport Section
                         ui.group(|ui| {
                             ui.vertical(|ui| {
-                                ui.set_width(section_width - 20.0);
                                 ui.label("3D Drone View");
-                                let viewport_width = (section_width - 30.0).min(250.0);
-                                let viewport_height = viewport_width * 0.75; // Match render target aspect
+                                ui.set_width(left_width);
+                                let viewport_height = left_width * 0.75; // Match render target aspect
                                 if let Some(texture_id) = state.viewport_texture_id {
                                     ui.image(egui::load::SizedTexture::new(
                                         texture_id,
-                                        egui::vec2(viewport_width, viewport_height),
+                                        egui::vec2(left_width, viewport_height),
                                     ));
                                 } else {
-                                    ui.allocate_space(egui::vec2(viewport_width, viewport_height));
+                                    ui.allocate_space(egui::vec2(left_width, viewport_height));
                                     ui.label("Loading 3D view...");
                                 }
-
-                                ui.add_space(5.0);
 
                                 // Current values in a styled box
                                 egui::Frame::group(ui.style())
@@ -375,7 +352,6 @@ pub fn ui_system(
                                                         .fill(Color32::from_rgb(80, 20, 20))
                                                         .rounding(egui::Rounding::same(4.0))
                                                         .show(ui, |ui| {
-                                                            ui.set_width(box_width);
                                                             ui.label(
                                                                 egui::RichText::new(format!(
                                                                     "Roll: {:.2}°",
@@ -398,7 +374,6 @@ pub fn ui_system(
                                                         .fill(Color32::from_rgb(20, 80, 20))
                                                         .rounding(egui::Rounding::same(4.0))
                                                         .show(ui, |ui| {
-                                                            ui.set_width(box_width);
                                                             ui.label(
                                                                 egui::RichText::new(format!(
                                                                     "Pitch: {:.2}°",
@@ -421,7 +396,6 @@ pub fn ui_system(
                                                         .fill(Color32::from_rgb(20, 20, 80))
                                                         .rounding(egui::Rounding::same(4.0))
                                                         .show(ui, |ui| {
-                                                            ui.set_width(box_width);
                                                             ui.label(
                                                                 egui::RichText::new(format!(
                                                                     "Yaw: {:.2}°",
@@ -445,59 +419,67 @@ pub fn ui_system(
                         // Flight Controller Commands Section
                         ui.group(|ui| {
                             ui.vertical(|ui| {
-                                ui.set_width(section_width - 20.0);
+                                ui.set_width(middle_width);
                                 ui.heading("Flight Controller Commands");
-                                ui.add_space(5.0);
-
                                 if let Some(sender) = &state.uart_sender {
                                     if let Ok(address) = state.send_address.parse::<u16>() {
-                                        if ui.button("Start").clicked() {
-                                            if let Err(e) =
-                                                uart::send_command_start(sender, address)
-                                            {
-                                                eprintln!("{}", e);
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Start").clicked() {
+                                                if let Err(e) =
+                                                    uart::send_command_start(sender, address)
+                                                {
+                                                    eprintln!("{}", e);
+                                                }
                                             }
-                                        }
-                                        ui.label("Arm and start motors");
+                                            ui.label("Arm and start motors");
+                                        });
+                                        ui.add_space(3.0);
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Stop").clicked() {
+                                                if let Err(e) =
+                                                    uart::send_command_stop(sender, address)
+                                                {
+                                                    eprintln!("{}", e);
+                                                }
+                                            }
+                                            ui.label("Disarm and stop motors normally");
+                                        });
                                         ui.add_space(3.0);
 
-                                        if ui.button("Stop").clicked() {
-                                            if let Err(e) = uart::send_command_stop(sender, address)
-                                            {
-                                                eprintln!("{}", e);
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Emergency Stop").clicked() {
+                                                if let Err(e) = uart::send_command_emergency_stop(
+                                                    sender, address,
+                                                ) {
+                                                    eprintln!("{}", e);
+                                                }
                                             }
-                                        }
-                                        ui.label("Disarm and stop motors normally");
+                                            ui.label("Immediate emergency shutdown");
+                                        });
                                         ui.add_space(3.0);
 
-                                        if ui.button("Emergency Stop").clicked() {
-                                            if let Err(e) =
-                                                uart::send_command_emergency_stop(sender, address)
-                                            {
-                                                eprintln!("{}", e);
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Calibrate").clicked() {
+                                                if let Err(e) =
+                                                    uart::send_command_calibrate(sender, address)
+                                                {
+                                                    eprintln!("{}", e);
+                                                }
                                             }
-                                        }
-                                        ui.label("Immediate emergency shutdown");
+                                            ui.label("Calibrate IMU sensors");
+                                        });
                                         ui.add_space(3.0);
 
-                                        if ui.button("Calibrate").clicked() {
-                                            if let Err(e) =
-                                                uart::send_command_calibrate(sender, address)
-                                            {
-                                                eprintln!("{}", e);
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Reset").clicked() {
+                                                if let Err(e) =
+                                                    uart::send_command_reset(sender, address)
+                                                {
+                                                    eprintln!("{}", e);
+                                                }
                                             }
-                                        }
-                                        ui.label("Calibrate IMU sensors");
-                                        ui.add_space(3.0);
-
-                                        if ui.button("Reset").clicked() {
-                                            if let Err(e) =
-                                                uart::send_command_reset(sender, address)
-                                            {
-                                                eprintln!("{}", e);
-                                            }
-                                        }
-                                        ui.label("Reset flight controller state");
+                                            ui.label("Reset flight controller state");
+                                        });
 
                                         ui.separator();
                                         ui.label("Base Throttle");
@@ -531,8 +513,8 @@ pub fn ui_system(
                         // System Logs Section
                         ui.group(|ui| {
                             ui.vertical(|ui| {
-                                ui.set_width(section_width - 20.0);
-                                let buffer = state.data_buffer.lock().unwrap();
+                                ui.set_width(right_width);
+                                let mut buffer = state.data_buffer.lock().unwrap();
                                 ui.label(format!("System Logs ({} messages)", buffer.logs.len()));
 
                                 egui::ScrollArea::vertical()
@@ -541,6 +523,10 @@ pub fn ui_system(
                                     .auto_shrink([false; 2])
                                     .stick_to_bottom(auto_scroll)
                                     .show(ui, |ui| {
+                                        if ui.button("clear logs").clicked() {
+                                            buffer.clear_logs();
+                                        }
+
                                         for log in buffer.logs.iter() {
                                             ui.horizontal(|ui| {
                                                 ui.label(format!(
@@ -554,6 +540,10 @@ pub fn ui_system(
                             });
                         });
                     });
+
+                    if ui.button("clear plots").clicked() {
+                        state.data_buffer.lock().unwrap().clear_data();
+                    }
 
                     // Attitude Plot - Graph only (3D view is in the separate Bevy 3D scene)
                     ui.group(|ui| {
@@ -583,7 +573,6 @@ pub fn ui_system(
                             });
                     });
 
-                    // PID Selection and Plot
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
                             ui.label("PID Axis:");

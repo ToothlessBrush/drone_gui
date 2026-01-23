@@ -1,7 +1,6 @@
 use chrono::Local;
 
-use crate::protocol::TelemetryPacket;
-use crate::telemetry::{ReceivedMessage, TelemetryData};
+use crate::telemetry::{ReceivedMessage, TelemetryData, TelemetryPacket};
 
 pub fn parse_rcv(line: &str) -> Option<ReceivedMessage> {
     let parts: Vec<&str> = line.strip_prefix("+RCV=")?.split(",").collect();
@@ -23,8 +22,6 @@ pub fn parse_rcv(line: &str) -> Option<ReceivedMessage> {
 }
 
 /// Parse telemetry from serial data
-/// Format: "TELEM:roll:pitch:yaw:roll_p:roll_i:roll_d:pitch_p:pitch_i:pitch_d:yaw_p:yaw_i:yaw_d:alt:voltage"
-/// Each field is a float formatted as [sign]whole.decimal (e.g., "0.123", "-1.456")
 pub fn parse_telemetry(line: &str) -> Option<TelemetryData> {
     let mut parts = line.splitn(2, ':');
     let header = parts.next()?;
@@ -34,7 +31,11 @@ pub fn parse_telemetry(line: &str) -> Option<TelemetryData> {
         return None;
     }
 
-    todo!()
+    let bytes = hex::decode(hex).ok()?;
+
+    let packet = bytemuck::try_from_bytes::<TelemetryPacket>(&bytes).ok()?;
+
+    Some(packet.into())
 }
 
 /// Parse log message from serial data

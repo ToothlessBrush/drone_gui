@@ -14,7 +14,7 @@ pub enum PidAxis {
 
 #[derive(Clone, Debug)]
 pub struct TelemetryData {
-    pub timestamp: f64,
+    pub timestamp: u32,
     pub clock_time: DateTime<Local>,
     // Attitude
     pub roll: f32,
@@ -56,6 +56,27 @@ pub struct TelemetryPacket {
     yaw_d_term: f32,
 }
 
+impl From<&TelemetryPacket> for TelemetryData {
+    fn from(packet: &TelemetryPacket) -> Self {
+        Self {
+            timestamp: packet.timestamp_ms,
+            clock_time: Local::now(),
+            roll: packet.roll,
+            pitch: packet.pitch,
+            yaw: packet.yaw,
+            roll_p: packet.roll_p_term,
+            roll_i: packet.roll_i_term,
+            roll_d: packet.roll_d_term,
+            pitch_p: packet.pitch_p_term,
+            pitch_i: packet.pitch_i_term,
+            pitch_d: packet.pitch_d_term,
+            yaw_p: packet.yaw_p_term,
+            yaw_i: packet.yaw_i_term,
+            yaw_d: packet.yaw_d_term,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LogMessage {
     pub _timestamp: f64,
@@ -89,8 +110,15 @@ impl DataBuffer {
         }
     }
 
+    pub fn clear_data(&mut self) {
+        self.data.clear();
+    }
+
+    pub fn clear_logs(&mut self) {
+        self.logs.clear();
+    }
+
     pub fn push(&mut self, mut telem: TelemetryData) {
-        telem.timestamp = self.start_time.elapsed().as_secs_f64();
         telem.clock_time = Local::now();
 
         if self.data.len() >= MAX_POINTS {
@@ -115,25 +143,25 @@ impl DataBuffer {
     pub fn get_roll_data(&self) -> PlotPoints {
         self.data
             .iter()
-            .map(|d| [d.timestamp, d.roll as f64])
+            .map(|d| [d.timestamp as f64, d.roll as f64])
             .collect()
     }
 
     pub fn get_pitch_data(&self) -> PlotPoints {
         self.data
             .iter()
-            .map(|d| [d.timestamp, d.pitch as f64])
+            .map(|d| [d.timestamp as f64, d.pitch as f64])
             .collect()
     }
 
     pub fn get_yaw_data(&self) -> PlotPoints {
         self.data
             .iter()
-            .map(|d| [d.timestamp, d.yaw as f64])
+            .map(|d| [d.timestamp as f64, d.yaw as f64])
             .collect()
     }
 
-    pub fn get_pid_p_data<'a>(&'a self, axis: PidAxis) -> PlotPoints {
+    pub fn get_pid_p_data(&self, axis: PidAxis) -> PlotPoints {
         self.data
             .iter()
             .map(|d| {
@@ -142,12 +170,12 @@ impl DataBuffer {
                     PidAxis::Pitch => d.pitch_p,
                     PidAxis::Yaw => d.yaw_p,
                 };
-                [d.timestamp, val as f64]
+                [d.timestamp as f64, val as f64]
             })
             .collect()
     }
 
-    pub fn get_pid_i_data<'a>(&'a self, axis: PidAxis) -> PlotPoints {
+    pub fn get_pid_i_data(&self, axis: PidAxis) -> PlotPoints {
         self.data
             .iter()
             .map(|d| {
@@ -156,12 +184,12 @@ impl DataBuffer {
                     PidAxis::Pitch => d.pitch_i,
                     PidAxis::Yaw => d.yaw_i,
                 };
-                [d.timestamp, val as f64]
+                [d.timestamp as f64, val as f64]
             })
             .collect()
     }
 
-    pub fn get_pid_d_data<'a>(&'a self, axis: PidAxis) -> PlotPoints {
+    pub fn get_pid_d_data(&self, axis: PidAxis) -> PlotPoints {
         self.data
             .iter()
             .map(|d| {
@@ -170,7 +198,7 @@ impl DataBuffer {
                     PidAxis::Pitch => d.pitch_d,
                     PidAxis::Yaw => d.yaw_d,
                 };
-                [d.timestamp, val as f64]
+                [d.timestamp as f64, val as f64]
             })
             .collect()
     }
