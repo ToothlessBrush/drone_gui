@@ -6,7 +6,6 @@ pub enum CommandType {
     Stop,
     EmergencyStop,
     SetThrottle(f32),
-    SetPoint { pitch: f32, roll: f32, yaw: f32 },
     Calibrate,
     Reset,
 }
