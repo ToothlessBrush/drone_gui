@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use egui::Color32;
 
 use crate::drone_scene::{Drone, DroneOrientation, ViewportImage};
+use crate::protocol;
 use crate::telemetry::{DataBuffer, PidAxis};
 use crate::uart::{self, UartCommand};
 use crate::video::{self, SharedVideoFrame};
@@ -425,7 +426,7 @@ pub fn ui_system(
                                         ui.horizontal(|ui| {
                                             if ui.button("Start").clicked() {
                                                 if let Err(e) =
-                                                    uart::send_command_start(sender, address)
+                                                    protocol::send_command_start(sender, address)
                                                 {
                                                     eprintln!("{}", e);
                                                 }
@@ -436,7 +437,7 @@ pub fn ui_system(
                                         ui.horizontal(|ui| {
                                             if ui.button("Stop").clicked() {
                                                 if let Err(e) =
-                                                    uart::send_command_stop(sender, address)
+                                                    protocol::send_command_stop(sender, address)
                                                 {
                                                     eprintln!("{}", e);
                                                 }
@@ -447,9 +448,11 @@ pub fn ui_system(
 
                                         ui.horizontal(|ui| {
                                             if ui.button("Emergency Stop").clicked() {
-                                                if let Err(e) = uart::send_command_emergency_stop(
-                                                    sender, address,
-                                                ) {
+                                                if let Err(e) =
+                                                    protocol::send_command_emergency_stop(
+                                                        sender, address,
+                                                    )
+                                                {
                                                     eprintln!("{}", e);
                                                 }
                                             }
@@ -459,9 +462,9 @@ pub fn ui_system(
 
                                         ui.horizontal(|ui| {
                                             if ui.button("Calibrate").clicked() {
-                                                if let Err(e) =
-                                                    uart::send_command_calibrate(sender, address)
-                                                {
+                                                if let Err(e) = protocol::send_command_calibrate(
+                                                    sender, address,
+                                                ) {
                                                     eprintln!("{}", e);
                                                 }
                                             }
@@ -472,7 +475,7 @@ pub fn ui_system(
                                         ui.horizontal(|ui| {
                                             if ui.button("Reset").clicked() {
                                                 if let Err(e) =
-                                                    uart::send_command_reset(sender, address)
+                                                    protocol::send_command_reset(sender, address)
                                                 {
                                                     eprintln!("{}", e);
                                                 }
@@ -486,7 +489,7 @@ pub fn ui_system(
                                         let slider_response =
                                             ui.add(Slider::new(&mut throttle_clone, 0.0..=1.0));
                                         if slider_response.drag_stopped() {
-                                            if let Err(e) = uart::send_command_set_throttle(
+                                            if let Err(e) = protocol::send_command_set_throttle(
                                                 sender,
                                                 address,
                                                 state.base_throttle,
@@ -500,6 +503,8 @@ pub fn ui_system(
                                             }
                                         }
                                         state.base_throttle = throttle_clone;
+
+                                        ui.label("Set Point");
                                     } else {
                                         ui.label("Enter valid address to enable commands");
                                     }
