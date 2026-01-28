@@ -32,7 +32,9 @@ fn main() {
             Update,
             app::ui_system.after(drone_scene::update_drone_orientation),
         )
+        .add_systems(Update, app::heartbeat_system)
         .insert_resource(app::AppState::default())
+        .insert_resource(app::HeartbeatTimer::default())
         .insert_non_send_resource(app::GamepadState::default())
         .run();
 }

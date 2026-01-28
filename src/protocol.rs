@@ -26,6 +26,15 @@ pub struct SetpointPacket {
     pub yaw: f32,
 }
 
+#[repr(C, packed)]
+#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
+pub struct HeartBeatPacket {
+    pub base_throttle: f32,
+    pub roll: f32,
+    pub pitch: f32,
+    pub yaw: f32,
+}
+
 pub struct Attitude {
     pub roll: f32,
     pub pitch: f32,
@@ -40,6 +49,7 @@ pub enum CommandType {
     EmergencyStop,
     SetThrottle(ThrottlePacket),
     SetPoint(SetpointPacket),
+    HeartBeat(HeartBeatPacket),
     Calibrate,
     Reset,
 }
@@ -57,6 +67,7 @@ impl CommandType {
             // encoded commands
             CommandType::SetThrottle(throttle) => format!("ST:{}", throttle.to_hex()),
             CommandType::SetPoint(point) => format!("SP:{}", point.to_hex()),
+            CommandType::HeartBeat(beat) => format!("HB:{}", beat.to_hex()),
         }
     }
 }
@@ -133,5 +144,25 @@ pub fn send_command_set_point(
         .to_ascii()
         .to_string(),
     })
-    .map_err(|e| format!("Failed to send SET_POINT command: {}", e))
+    .map_err(|e| format!("failed to send set_point command: {}", e))
+}
+
+pub fn send_command_heart_beat(
+    tx: &mpsc::Sender<UartCommand>,
+    address: u16,
+    base_throttle: f32,
+    attitude: Attitude,
+) -> Result<(), String> {
+    tx.send(UartCommand::Send {
+        address,
+        data: CommandType::HeartBeat(HeartBeatPacket {
+            base_throttle,
+            roll: attitude.roll,
+            pitch: attitude.pitch,
+            yaw: attitude.yaw,
+        })
+        .to_ascii()
+        .to_string(),
+    })
+    .map_err(|e| format!("failed to send set_point command: {}", e))
 }

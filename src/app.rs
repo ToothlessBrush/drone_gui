@@ -14,6 +14,19 @@ use crate::telemetry::{DataBuffer, PidAxis};
 use crate::uart::{self, UartCommand};
 use crate::video::{self, SharedVideoFrame};
 
+#[derive(Resource)]
+pub struct HeartbeatTimer {
+    pub timer: Timer,
+}
+
+impl Default for HeartbeatTimer {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+        }
+    }
+}
+
 #[derive(Resource, Clone)]
 pub struct AppState {
     pub data_buffer: Arc<Mutex<DataBuffer>>,
@@ -488,20 +501,20 @@ pub fn ui_system(
                                         let mut throttle_clone = state.base_throttle;
                                         let slider_response =
                                             ui.add(Slider::new(&mut throttle_clone, 0.0..=1.0));
-                                        if slider_response.drag_stopped() {
-                                            if let Err(e) = protocol::send_command_set_throttle(
-                                                sender,
-                                                address,
-                                                state.base_throttle,
-                                            ) {
-                                                eprintln!("Failed to send throttle: {}", e);
-                                            } else {
-                                                println!(
-                                                    "Sent throttle: {:.2}",
-                                                    state.base_throttle
-                                                );
-                                            }
-                                        }
+                                        // if slider_response.drag_stopped() {
+                                        //     if let Err(e) = protocol::send_command_set_throttle(
+                                        //         sender,
+                                        //         address,
+                                        //         state.base_throttle,
+                                        //     ) {
+                                        //         eprintln!("Failed to send throttle: {}", e);
+                                        //     } else {
+                                        //         println!(
+                                        //             "Sent throttle: {:.2}",
+                                        //             state.base_throttle
+                                        //         );
+                                        //     }
+                                        // }
                                         state.base_throttle = throttle_clone;
 
                                         ui.label("Set Point");
@@ -629,4 +642,44 @@ pub fn ui_system(
                     });
                 }); // End of scroll area
         });
+}
+
+/// Heartbeat system that sends throttle and setpoint every 300ms when UART is connected
+pub fn heartbeat_system(
+    time: Res<Time>,
+    mut heartbeat_timer: ResMut<HeartbeatTimer>,
+    state: Res<AppState>,
+) {
+    // Only send heartbeat if UART is connected
+    if !state.serial_connected {
+        return;
+    }
+
+    heartbeat_timer.timer.tick(time.delta());
+
+    if heartbeat_timer.timer.just_finished() {
+        if let Some(sender) = &state.uart_sender {
+            if let Ok(address) = state.send_address.parse::<u16>() {
+                // Get latest attitude from telemetry
+                if let Ok(buffer) = state.data_buffer.lock() {
+                    if let Some(latest) = buffer.data.back() {
+                        let attitude = protocol::Attitude {
+                            roll: 0.0,
+                            pitch: 0.0,
+                            yaw: 0.0,
+                        };
+
+                        if let Err(e) = protocol::send_command_heart_beat(
+                            sender,
+                            address,
+                            state.base_throttle,
+                            attitude,
+                        ) {
+                            eprintln!("Failed to send heartbeat: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
