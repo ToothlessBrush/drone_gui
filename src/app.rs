@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bevy_egui::egui::Slider;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot};
-use gilrs::Gilrs;
 use std::sync::{Arc, Mutex, mpsc};
 
 // Use egui's Color32 from bevy_egui to avoid version conflicts
@@ -28,6 +27,25 @@ impl Default for HeartbeatTimer {
 }
 
 #[derive(Resource, Clone)]
+pub struct ControllerState {
+    pub roll: f32,
+    pub pitch: f32,
+    pub yaw: f32,
+    pub throttle: f32,
+}
+
+impl Default for ControllerState {
+    fn default() -> Self {
+        Self {
+            roll: 0.0,
+            pitch: 0.0,
+            yaw: 0.0,
+            throttle: 0.0,
+        }
+    }
+}
+
+#[derive(Resource, Clone)]
 pub struct AppState {
     pub data_buffer: Arc<Mutex<DataBuffer>>,
     pub serial_connected: bool,
@@ -44,13 +62,6 @@ pub struct AppState {
     pub viewport_texture_id: Option<egui::TextureId>,
     pub available_ports: Vec<String>,
     pub show_pid_tuning: bool,
-    pub base_throttle: f32,
-}
-
-// Gilrs is not Sync, so we keep it as a NonSend resource
-// NonSend resources can only be accessed from the main thread
-pub struct GamepadState {
-    pub gilrs: gilrs::Gilrs,
 }
 
 impl Default for AppState {
@@ -83,15 +94,6 @@ impl Default for AppState {
             video_device_path: "/dev/video2".to_string(),
             viewport_texture_id: None,
             show_pid_tuning: false,
-            base_throttle: 0.0,
-        }
-    }
-}
-
-impl Default for GamepadState {
-    fn default() -> Self {
-        Self {
-            gilrs: Gilrs::new().unwrap(),
         }
     }
 }
@@ -165,20 +167,10 @@ impl AppState {
 pub fn ui_system(
     mut contexts: EguiContexts,
     mut state: ResMut<AppState>,
-    gamepad: Option<NonSendMut<GamepadState>>,
+    mut control: ResMut<ControllerState>,
     mut drone_query: Query<&mut DroneOrientation, With<Drone>>,
     viewport_image: Res<ViewportImage>,
 ) {
-    // Handle gamepad events
-    if let Some(mut gamepad) = gamepad {
-        while let Some(gilrs::Event {
-            id, event, time, ..
-        }) = gamepad.gilrs.next_event()
-        {
-            println!("{:?} New event from {}: {:?}", time, id, event);
-        }
-    }
-
     // Register the viewport image with egui context if not already done
     if state.viewport_texture_id.is_none() {
         // Use bevy_egui's add_image to register the Bevy image handle
@@ -498,24 +490,9 @@ pub fn ui_system(
 
                                         ui.separator();
                                         ui.label("Base Throttle");
-                                        let mut throttle_clone = state.base_throttle;
-                                        let slider_response =
-                                            ui.add(Slider::new(&mut throttle_clone, 0.0..=1.0));
-                                        // if slider_response.drag_stopped() {
-                                        //     if let Err(e) = protocol::send_command_set_throttle(
-                                        //         sender,
-                                        //         address,
-                                        //         state.base_throttle,
-                                        //     ) {
-                                        //         eprintln!("Failed to send throttle: {}", e);
-                                        //     } else {
-                                        //         println!(
-                                        //             "Sent throttle: {:.2}",
-                                        //             state.base_throttle
-                                        //         );
-                                        //     }
-                                        // }
-                                        state.base_throttle = throttle_clone;
+                                        let mut throttle_clone = control.throttle;
+                                        ui.add(Slider::new(&mut throttle_clone, 0.0..=1.0));
+                                        control.throttle = throttle_clone;
 
                                         ui.label("Set Point");
                                     } else {
@@ -644,11 +621,48 @@ pub fn ui_system(
         });
 }
 
+/// Controller input system that reads gamepad axes and updates controller state
+/// Left stick: pitch (Y) and yaw (X)
+/// Right stick: throttle adjustment (Y) and roll (X)
+pub fn controller_input_system(
+    time: Res<Time>,
+    gamepads: Query<&Gamepad>,
+    mut controller_state: ResMut<ControllerState>,
+) {
+    // Get the first connected gamepad
+    let Some(gamepad) = gamepads.iter().next() else {
+        return;
+    };
+
+    // Left stick Y-axis: pitch (inverted so up is positive)
+    if let Some(value) = gamepad.get(GamepadAxis::LeftStickY) {
+        controller_state.pitch = -value; // Invert Y axis
+    }
+
+    // Left stick X-axis: yaw
+    if let Some(value) = gamepad.get(GamepadAxis::LeftStickX) {
+        controller_state.yaw = value;
+    }
+
+    // Right stick Y-axis: throttle adjustment (up increases, down decreases)
+    if let Some(value) = gamepad.get(GamepadAxis::RightStickY) {
+        // Inverted: up is positive, down is negative
+        let adjustment = value * time.delta_secs() * 0.25; // 0.5 = throttle change rate
+        controller_state.throttle = (controller_state.throttle + adjustment).clamp(0.0, 1.0);
+    }
+
+    // Right stick X-axis: roll
+    if let Some(value) = gamepad.get(GamepadAxis::RightStickX) {
+        controller_state.roll = value;
+    }
+}
+
 /// Heartbeat system that sends throttle and setpoint every 300ms when UART is connected
 pub fn heartbeat_system(
     time: Res<Time>,
     mut heartbeat_timer: ResMut<HeartbeatTimer>,
     state: Res<AppState>,
+    controller_state: Res<ControllerState>,
 ) {
     // Only send heartbeat if UART is connected
     if !state.serial_connected {
@@ -660,24 +674,21 @@ pub fn heartbeat_system(
     if heartbeat_timer.timer.just_finished() {
         if let Some(sender) = &state.uart_sender {
             if let Ok(address) = state.send_address.parse::<u16>() {
-                // Get latest attitude from telemetry
-                if let Ok(buffer) = state.data_buffer.lock() {
-                    if let Some(latest) = buffer.data.back() {
-                        let attitude = protocol::Attitude {
-                            roll: 0.0,
-                            pitch: 0.0,
-                            yaw: 0.0,
-                        };
+                // Use controller values for attitude control
+                let attitude = protocol::Attitude {
+                    roll: controller_state.roll,
+                    pitch: controller_state.pitch,
+                    yaw: controller_state.yaw,
+                };
 
-                        if let Err(e) = protocol::send_command_heart_beat(
-                            sender,
-                            address,
-                            state.base_throttle,
-                            attitude,
-                        ) {
-                            eprintln!("Failed to send heartbeat: {}", e);
-                        }
-                    }
+                // Use controller throttle instead of base_throttle slider
+                if let Err(e) = protocol::send_command_heart_beat(
+                    sender,
+                    address,
+                    controller_state.throttle,
+                    attitude,
+                ) {
+                    eprintln!("Failed to send heartbeat: {}", e);
                 }
             }
         }
