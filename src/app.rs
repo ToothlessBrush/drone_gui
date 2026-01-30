@@ -54,6 +54,8 @@ pub struct ControllerState {
     pub pitch: f32,
     pub yaw: f32,
     pub throttle: f32,
+    pub master_motor_throttle: f32,
+    pub motor_throttles: [f32; 4],
 }
 
 impl Default for ControllerState {
@@ -63,6 +65,8 @@ impl Default for ControllerState {
             pitch: 0.0,
             yaw: 0.0,
             throttle: 0.0,
+            master_motor_throttle: 0.0,
+            motor_throttles: [0.0; 4],
         }
     }
 }
@@ -468,6 +472,8 @@ pub fn ui_system(
                                         ui.horizontal(|ui| {
                                             if ui.button("Start").clicked() {
                                                 control.throttle = 0.0;
+                                                control.master_motor_throttle = 0.0;
+                                                control.motor_throttles = [0.0; 4];
                                                 if let Err(e) = protocol::send_command_start(
                                                     &command_queue,
                                                     address,
@@ -479,8 +485,22 @@ pub fn ui_system(
                                         });
                                         ui.add_space(3.0);
                                         ui.horizontal(|ui| {
+                                            if ui.button("Start Manual").clicked() {
+                                                if let Err(e) = protocol::send_command_start_manual(
+                                                    &command_queue,
+                                                    address,
+                                                ) {
+                                                    eprintln!("{}", e);
+                                                }
+                                            }
+                                            ui.label("Start manual control mode");
+                                        });
+                                        ui.add_space(3.0);
+                                        ui.horizontal(|ui| {
                                             if ui.button("Stop").clicked() {
                                                 control.throttle = 0.0;
+                                                control.master_motor_throttle = 0.0;
+                                                control.motor_throttles = [0.0; 4];
                                                 if let Err(e) = protocol::send_command_stop(
                                                     &command_queue,
                                                     address,
@@ -494,6 +514,9 @@ pub fn ui_system(
 
                                         ui.horizontal(|ui| {
                                             if ui.button("Emergency Stop").clicked() {
+                                                control.throttle = 0.0;
+                                                control.master_motor_throttle = 0.0;
+                                                control.motor_throttles = [0.0; 4];
                                                 if let Err(e) =
                                                     protocol::send_command_emergency_stop(
                                                         &command_queue,
@@ -537,6 +560,61 @@ pub fn ui_system(
                                         let mut throttle_clone = control.throttle;
                                         ui.add(Slider::new(&mut throttle_clone, 0.0..=1.0));
                                         control.throttle = throttle_clone;
+
+                                        ui.separator();
+                                        ui.label("Motor Throttles");
+                                        let mut master_clone = control.master_motor_throttle;
+                                        let master_changed = ui.add(Slider::new(&mut master_clone, 0.0..=1.0).text("Master")).changed();
+                                        if master_changed {
+                                            control.master_motor_throttle = master_clone;
+                                            control.motor_throttles = [master_clone; 4];
+                                            if let Err(e) = protocol::send_command_set_motor_throttle(
+                                                &command_queue,
+                                                address,
+                                                control.motor_throttles,
+                                            ) {
+                                                eprintln!("Failed to send motor throttle: {}", e);
+                                            }
+                                        }
+
+                                        let mut motor1_clone = control.motor_throttles[0];
+                                        if ui.add(Slider::new(&mut motor1_clone, 0.0..=1.0).text("Motor 1")).changed() {
+                                            control.motor_throttles[0] = motor1_clone;
+                                            if let Err(e) = protocol::send_command_set_motor_throttle(
+                                                &command_queue,
+                                                address,
+                                                control.motor_throttles,
+                                            ) {
+                                                eprintln!("Failed to send motor throttle: {}", e);
+                                            }
+                                        }
+
+                                        let mut motor2_clone = control.motor_throttles[1];
+                                        if ui.add(Slider::new(&mut motor2_clone, 0.0..=1.0).text("Motor 2")).changed() {
+                                            control.motor_throttles[1] = motor2_clone;
+                                            if let Err(e) = protocol::send_command_set_motor_throttle(
+                                                &command_queue,
+                                                address,
+                                                control.motor_throttles,
+                                            ) {
+                                                eprintln!("Failed to send motor throttle: {}", e);
+                                            }
+                                        }
+
+                                        let mut motor3_clone = control.motor_throttles[2];
+                                        if ui.add(Slider::new(&mut motor3_clone, 0.0..=1.0).text("Motor 3")).changed() {
+                                            control.motor_throttles[2] = motor3_clone;
+                                            if let Err(e) = protocol::send_command_set_motor_throttle(
+                                                &command_queue,
+                                                address,
+                                                control.motor_throttles,
+                                            ) {
+                                                eprintln!("Failed to send motor throttle: {}", e);
+                                            }
+                                        }
+
+                                        // Motor 4 follows master
+                                        control.motor_throttles[3] = control.master_motor_throttle;
 
                                         ui.label("Set Point");
                                     } else {
