@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::egui::Slider;
 use bevy_egui::{EguiContexts, egui};
 use egui_plot::{Legend, Line, Plot};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, mpsc};
 
 // Use egui's Color32 from bevy_egui to avoid version conflicts
@@ -21,7 +22,28 @@ pub struct HeartbeatTimer {
 impl Default for HeartbeatTimer {
     fn default() -> Self {
         Self {
-            timer: Timer::from_seconds(0.3, TimerMode::Repeating),
+            timer: Timer::from_seconds(0.5, TimerMode::Repeating),
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct CommandQueue {
+    pub queue: Arc<Mutex<VecDeque<(u16, String)>>>,
+}
+
+impl CommandQueue {
+    pub fn enqueue(&self, address: u16, data: String) {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.push_back((address, data));
+        }
+    }
+
+    pub fn dequeue(&self) -> Option<(u16, String)> {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.pop_front()
+        } else {
+            None
         }
     }
 }
@@ -62,6 +84,13 @@ pub struct AppState {
     pub viewport_texture_id: Option<egui::TextureId>,
     pub available_ports: Vec<String>,
     pub show_pid_tuning: bool,
+    // PID tuning fields
+    pub pid_tune_p: f32,
+    pub pid_tune_i: f32,
+    pub pid_tune_d: f32,
+    pub pid_tune_i_limit: f32,
+    pub pid_tune_pid_limit: f32,
+    pub pid_tune_axis: protocol::Axis,
 }
 
 impl Default for AppState {
@@ -94,6 +123,13 @@ impl Default for AppState {
             video_device_path: "/dev/video2".to_string(),
             viewport_texture_id: None,
             show_pid_tuning: false,
+            // Initialize PID tuning with sensible defaults
+            pid_tune_p: 1.0,
+            pid_tune_i: 0.0,
+            pid_tune_d: 0.0,
+            pid_tune_i_limit: 10.0,
+            pid_tune_pid_limit: 100.0,
+            pid_tune_axis: protocol::Axis::Roll,
         }
     }
 }
@@ -170,6 +206,7 @@ pub fn ui_system(
     mut control: ResMut<ControllerState>,
     mut drone_query: Query<&mut DroneOrientation, With<Drone>>,
     viewport_image: Res<ViewportImage>,
+    command_queue: Res<CommandQueue>,
 ) {
     // Register the viewport image with egui context if not already done
     if state.viewport_texture_id.is_none() {
@@ -426,13 +463,15 @@ pub fn ui_system(
                             ui.vertical(|ui| {
                                 ui.set_width(middle_width);
                                 ui.heading("Flight Controller Commands");
-                                if let Some(sender) = &state.uart_sender {
+                                if state.uart_sender.is_some() {
                                     if let Ok(address) = state.send_address.parse::<u16>() {
                                         ui.horizontal(|ui| {
                                             if ui.button("Start").clicked() {
-                                                if let Err(e) =
-                                                    protocol::send_command_start(sender, address)
-                                                {
+                                                control.throttle = 0.0;
+                                                if let Err(e) = protocol::send_command_start(
+                                                    &command_queue,
+                                                    address,
+                                                ) {
                                                     eprintln!("{}", e);
                                                 }
                                             }
@@ -441,9 +480,11 @@ pub fn ui_system(
                                         ui.add_space(3.0);
                                         ui.horizontal(|ui| {
                                             if ui.button("Stop").clicked() {
-                                                if let Err(e) =
-                                                    protocol::send_command_stop(sender, address)
-                                                {
+                                                control.throttle = 0.0;
+                                                if let Err(e) = protocol::send_command_stop(
+                                                    &command_queue,
+                                                    address,
+                                                ) {
                                                     eprintln!("{}", e);
                                                 }
                                             }
@@ -455,7 +496,8 @@ pub fn ui_system(
                                             if ui.button("Emergency Stop").clicked() {
                                                 if let Err(e) =
                                                     protocol::send_command_emergency_stop(
-                                                        sender, address,
+                                                        &command_queue,
+                                                        address,
                                                     )
                                                 {
                                                     eprintln!("{}", e);
@@ -468,7 +510,8 @@ pub fn ui_system(
                                         ui.horizontal(|ui| {
                                             if ui.button("Calibrate").clicked() {
                                                 if let Err(e) = protocol::send_command_calibrate(
-                                                    sender, address,
+                                                    &command_queue,
+                                                    address,
                                                 ) {
                                                     eprintln!("{}", e);
                                                 }
@@ -479,9 +522,10 @@ pub fn ui_system(
 
                                         ui.horizontal(|ui| {
                                             if ui.button("Reset").clicked() {
-                                                if let Err(e) =
-                                                    protocol::send_command_reset(sender, address)
-                                                {
+                                                if let Err(e) = protocol::send_command_reset(
+                                                    &command_queue,
+                                                    address,
+                                                ) {
                                                     eprintln!("{}", e);
                                                 }
                                             }
@@ -544,9 +588,10 @@ pub fn ui_system(
                         ui.label("Attitude (Roll, Pitch, Yaw)");
                         let buffer = state.data_buffer.lock().unwrap();
                         let available_width = ui.available_width();
+                        let plot_height = (ui.ctx().screen_rect().height() * 0.25).min(300.0);
                         Plot::new("attitude_plot")
                             .legend(Legend::default())
-                            .height(300.0)
+                            .height(plot_height)
                             .width(available_width)
                             .show(ui, |plot_ui| {
                                 plot_ui.line(
@@ -594,11 +639,12 @@ pub fn ui_system(
 
                         let buffer = state.data_buffer.lock().unwrap();
                         let available_width = ui.available_width();
+                        let plot_height = (ui.ctx().screen_rect().height() * 0.20).min(200.0);
 
                         Plot::new("pid_plot")
                             .legend(Legend::default())
-                            .height(200.0)
-                            .width(available_width - 20.0)
+                            .height(plot_height)
+                            .width(available_width)
                             .show(ui, |plot_ui| {
                                 plot_ui.line(
                                     Line::new(buffer.get_pid_p_data(selected_axis))
@@ -619,6 +665,133 @@ pub fn ui_system(
                     });
                 }); // End of scroll area
         });
+
+    // PID Tuning Window
+    let mut show_pid_tuning = state.show_pid_tuning;
+    if show_pid_tuning {
+        egui::Window::new("PID Tuning")
+            .open(&mut show_pid_tuning)
+            .resizable(true)
+            .default_width(400.0)
+            .show(ctx, |ui| {
+                ui.heading("Configure PID Parameters");
+                ui.separator();
+
+                // Axis selection
+                ui.horizontal(|ui| {
+                    ui.label("Axis:");
+                    ui.selectable_value(&mut state.pid_tune_axis, protocol::Axis::Roll, "Roll");
+                    ui.selectable_value(&mut state.pid_tune_axis, protocol::Axis::Pitch, "Pitch");
+                    ui.selectable_value(&mut state.pid_tune_axis, protocol::Axis::Yaw, "Yaw");
+                });
+
+                ui.separator();
+
+                // PID parameters
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("P (Proportional):");
+                    ui.add(
+                        egui::DragValue::new(&mut state.pid_tune_p)
+                            .speed(0.01)
+                            .range(0.0..=20.0),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("I (Integral):");
+                    ui.add(
+                        egui::DragValue::new(&mut state.pid_tune_i)
+                            .speed(0.001)
+                            .range(0.0..=2.0),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("D (Derivative):");
+                    ui.add(
+                        egui::DragValue::new(&mut state.pid_tune_d)
+                            .speed(0.001)
+                            .range(0.0..=2.0),
+                    );
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+
+                // Limits
+                ui.horizontal(|ui| {
+                    ui.label("I Limit:");
+                    ui.add(
+                        egui::DragValue::new(&mut state.pid_tune_i_limit)
+                            .speed(0.1)
+                            .range(0.0..=50.0),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("PID Limit:");
+                    ui.add(
+                        egui::DragValue::new(&mut state.pid_tune_pid_limit)
+                            .speed(0.1)
+                            .range(0.0..=100.0),
+                    );
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+
+                // Send button
+                ui.horizontal(|ui| {
+                    if ui.button("Send Tune").clicked() {
+                        if let Ok(address) = state.send_address.parse::<u16>() {
+                            let pid = protocol::PIDController {
+                                p: state.pid_tune_p,
+                                i: state.pid_tune_i,
+                                d: state.pid_tune_d,
+                                i_limit: state.pid_tune_i_limit,
+                                pid_limit: state.pid_tune_pid_limit,
+                            };
+
+                            if let Err(e) = protocol::send_command_tune_pid(
+                                &command_queue,
+                                address,
+                                state.pid_tune_axis,
+                                pid,
+                            ) {
+                                eprintln!("Failed to send PID tune command: {}", e);
+                            } else {
+                                // Log success
+                                if let Ok(mut buffer) = state.data_buffer.lock() {
+                                    let axis_name = match state.pid_tune_axis {
+                                        protocol::Axis::Roll => "Roll",
+                                        protocol::Axis::Pitch => "Pitch",
+                                        protocol::Axis::Yaw => "Yaw",
+                                    };
+                                    buffer.push_log(format!(
+                                        "PID tune sent for {}: P={:.2}, I={:.2}, D={:.2}",
+                                        axis_name,
+                                        state.pid_tune_p,
+                                        state.pid_tune_i,
+                                        state.pid_tune_d
+                                    ));
+                                }
+                            }
+                        } else {
+                            eprintln!("Invalid address for PID tuning");
+                        }
+                    }
+
+                    if ui.button("Close").clicked() {
+                        state.show_pid_tuning = false;
+                    }
+                });
+
+                ui.add_space(5.0);
+                ui.label("Note: PID tune will be sent in next heartbeat cycle");
+            });
+        state.show_pid_tuning = show_pid_tuning;
+    }
 }
 
 /// Controller input system that reads gamepad axes and updates controller state
@@ -628,6 +801,7 @@ pub fn controller_input_system(
     time: Res<Time>,
     gamepads: Query<&Gamepad>,
     mut controller_state: ResMut<ControllerState>,
+    command_queue: Res<CommandQueue>,
 ) {
     // Get the first connected gamepad
     let Some(gamepad) = gamepads.iter().next() else {
@@ -655,41 +829,57 @@ pub fn controller_input_system(
     if let Some(value) = gamepad.get(GamepadAxis::RightStickX) {
         controller_state.roll = value;
     }
+
+    if gamepad.pressed(GamepadButton::Start)
+        && let Err(e) = protocol::send_command_emergency_stop(&command_queue, 2)
+    {
+        eprintln!("EMERGENCY FAILED RUN: {e}");
+    }
 }
 
-/// Heartbeat system that sends throttle and setpoint every 300ms when UART is connected
+/// Heartbeat system that sends queued commands or heartbeat every 300ms when UART is connected
 pub fn heartbeat_system(
     time: Res<Time>,
     mut heartbeat_timer: ResMut<HeartbeatTimer>,
     state: Res<AppState>,
     controller_state: Res<ControllerState>,
+    command_queue: Res<CommandQueue>,
 ) {
-    // Only send heartbeat if UART is connected
+    // Only send if UART is connected
     if !state.serial_connected {
         return;
     }
 
     heartbeat_timer.timer.tick(time.delta());
 
-    if heartbeat_timer.timer.just_finished() {
-        if let Some(sender) = &state.uart_sender {
-            if let Ok(address) = state.send_address.parse::<u16>() {
-                // Use controller values for attitude control
-                let attitude = protocol::Attitude {
-                    roll: controller_state.roll,
-                    pitch: controller_state.pitch,
-                    yaw: controller_state.yaw,
-                };
+    if heartbeat_timer.timer.just_finished()
+        && let Some(sender) = &state.uart_sender
+        && let Ok(address) = state.send_address.parse::<u16>()
+    {
+        // Check if there's a command in the queue
+        if let Some((cmd_address, cmd_data)) = command_queue.dequeue() {
+            // Send the queued command
+            if let Err(e) = sender.send(UartCommand::Send {
+                address: cmd_address,
+                data: cmd_data,
+            }) {
+                eprintln!("Failed to send queued command: {}", e);
+            }
+        } else {
+            // No queued command, send heartbeat
+            let heartbeat_data = protocol::CommandType::HeartBeat(protocol::HeartBeatPacket {
+                base_throttle: controller_state.throttle,
+                roll: controller_state.roll,
+                pitch: controller_state.pitch,
+                yaw: controller_state.yaw,
+            })
+            .to_ascii();
 
-                // Use controller throttle instead of base_throttle slider
-                if let Err(e) = protocol::send_command_heart_beat(
-                    sender,
-                    address,
-                    controller_state.throttle,
-                    attitude,
-                ) {
-                    eprintln!("Failed to send heartbeat: {}", e);
-                }
+            if let Err(e) = sender.send(UartCommand::Send {
+                address,
+                data: heartbeat_data,
+            }) {
+                eprintln!("Failed to send heartbeat: {}", e);
             }
         }
     }

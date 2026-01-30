@@ -1,8 +1,6 @@
-use std::sync::mpsc;
-
 use bytemuck::{Pod, Zeroable};
 
-use crate::uart::UartCommand;
+use crate::app::CommandQueue;
 pub trait ToHex: Pod {
     fn to_hex(&self) -> String {
         bytemuck::bytes_of(self)
@@ -35,6 +33,33 @@ pub struct HeartBeatPacket {
     pub yaw: f32,
 }
 
+#[repr(C, packed)]
+#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
+pub struct PIDTunePacket {
+    pub p: f32,
+    pub i: f32,
+    pub d: f32,
+    pub i_limit: f32,
+    pub pid_limit: f32,
+    pub axis: u8,
+}
+
+pub struct PIDController {
+    pub p: f32,
+    pub i: f32,
+    pub d: f32,
+    pub i_limit: f32,
+    pub pid_limit: f32,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Axis {
+    Pitch = 0x0,
+    Roll = 0x1,
+    Yaw = 0x2,
+}
+
 pub struct Attitude {
     pub roll: f32,
     pub pitch: f32,
@@ -49,6 +74,7 @@ pub enum CommandType {
     EmergencyStop,
     SetThrottle(ThrottlePacket),
     SetPoint(SetpointPacket),
+    TunePID(PIDTunePacket),
     HeartBeat(HeartBeatPacket),
     Calibrate,
     Reset,
@@ -68,101 +94,82 @@ impl CommandType {
             CommandType::SetThrottle(throttle) => format!("ST:{}", throttle.to_hex()),
             CommandType::SetPoint(point) => format!("SP:{}", point.to_hex()),
             CommandType::HeartBeat(beat) => format!("HB:{}", beat.to_hex()),
+            CommandType::TunePID(tune) => format!("TP:{}", tune.to_hex()),
         }
     }
 }
 
-pub fn send_command_start(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
-    tx.send(UartCommand::Send {
-        address,
-        data: CommandType::Start.to_ascii().to_string(),
-    })
-    .map_err(|e| format!("Failed to send START command: {}", e))
+pub fn send_command_start(queue: &CommandQueue, address: u16) -> Result<(), String> {
+    queue.enqueue(address, CommandType::Start.to_ascii());
+    Ok(())
 }
 
-pub fn send_command_stop(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
-    tx.send(UartCommand::Send {
-        address,
-        data: CommandType::Stop.to_ascii().to_string(),
-    })
-    .map_err(|e| format!("Failed to send STOP command: {}", e))
+pub fn send_command_stop(queue: &CommandQueue, address: u16) -> Result<(), String> {
+    queue.enqueue(address, CommandType::Stop.to_ascii());
+    Ok(())
 }
 
-pub fn send_command_emergency_stop(
-    tx: &mpsc::Sender<UartCommand>,
-    address: u16,
-) -> Result<(), String> {
-    tx.send(UartCommand::Send {
-        address,
-        data: CommandType::EmergencyStop.to_ascii().to_string(),
-    })
-    .map_err(|e| format!("Failed to send EMERGENCY_STOP command: {}", e))
+pub fn send_command_emergency_stop(queue: &CommandQueue, address: u16) -> Result<(), String> {
+    queue.enqueue(address, CommandType::EmergencyStop.to_ascii());
+    Ok(())
 }
 
-pub fn send_command_calibrate(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
-    tx.send(UartCommand::Send {
-        address,
-        data: CommandType::Calibrate.to_ascii().to_string(),
-    })
-    .map_err(|e| format!("Failed to send CALIBRATE command: {}", e))
+pub fn send_command_calibrate(queue: &CommandQueue, address: u16) -> Result<(), String> {
+    queue.enqueue(address, CommandType::Calibrate.to_ascii());
+    Ok(())
 }
 
-pub fn send_command_reset(tx: &mpsc::Sender<UartCommand>, address: u16) -> Result<(), String> {
-    tx.send(UartCommand::Send {
-        address,
-        data: CommandType::Reset.to_ascii().to_string(),
-    })
-    .map_err(|e| format!("Failed to send RESET command: {}", e))
+pub fn send_command_reset(queue: &CommandQueue, address: u16) -> Result<(), String> {
+    queue.enqueue(address, CommandType::Reset.to_ascii());
+    Ok(())
 }
 
 pub fn send_command_set_throttle(
-    tx: &mpsc::Sender<UartCommand>,
+    queue: &CommandQueue,
     address: u16,
     throttle_value: f32,
 ) -> Result<(), String> {
-    tx.send(UartCommand::Send {
+    queue.enqueue(
         address,
-        data: CommandType::SetThrottle(ThrottlePacket(throttle_value))
-            .to_ascii()
-            .to_string(),
-    })
-    .map_err(|e| format!("Failed to send SET_THROTTLE command: {}", e))
+        CommandType::SetThrottle(ThrottlePacket(throttle_value)).to_ascii(),
+    );
+    Ok(())
 }
 
 pub fn send_command_set_point(
-    tx: &mpsc::Sender<UartCommand>,
+    queue: &CommandQueue,
     address: u16,
     attitude: Attitude,
 ) -> Result<(), String> {
-    tx.send(UartCommand::Send {
+    queue.enqueue(
         address,
-        data: CommandType::SetPoint(SetpointPacket {
+        CommandType::SetPoint(SetpointPacket {
             roll: attitude.roll,
             pitch: attitude.pitch,
             yaw: attitude.yaw,
         })
-        .to_ascii()
-        .to_string(),
-    })
-    .map_err(|e| format!("failed to send set_point command: {}", e))
+        .to_ascii(),
+    );
+    Ok(())
 }
 
-pub fn send_command_heart_beat(
-    tx: &mpsc::Sender<UartCommand>,
+pub fn send_command_tune_pid(
+    queue: &CommandQueue,
     address: u16,
-    base_throttle: f32,
-    attitude: Attitude,
+    axis: Axis,
+    pid: PIDController,
 ) -> Result<(), String> {
-    tx.send(UartCommand::Send {
+    queue.enqueue(
         address,
-        data: CommandType::HeartBeat(HeartBeatPacket {
-            base_throttle,
-            roll: attitude.roll,
-            pitch: attitude.pitch,
-            yaw: attitude.yaw,
+        CommandType::TunePID(PIDTunePacket {
+            p: pid.p,
+            i: pid.i,
+            d: pid.d,
+            i_limit: pid.i_limit,
+            pid_limit: pid.pid_limit,
+            axis: axis as u8,
         })
-        .to_ascii()
-        .to_string(),
-    })
-    .map_err(|e| format!("failed to send set_point command: {}", e))
+        .to_ascii(),
+    );
+    Ok(())
 }

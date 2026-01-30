@@ -82,7 +82,6 @@ fn send_lora_data(port: &mut Box<dyn SerialPort>, address: u16, data: &str) {
     }
 
     let cmd = format!("AT+SEND={},{},{}", address, payload_length, data);
-    println!("Sending: {}", cmd);
 
     if let Err(e) = port.write_all(format!("{}\r\n", cmd).as_bytes()) {
         eprintln!("Failed to send data: {}", e);
@@ -91,10 +90,6 @@ fn send_lora_data(port: &mut Box<dyn SerialPort>, address: u16, data: &str) {
 
     // Wait for +OK response
     if wait_for_response(port, "+OK") {
-        println!(
-            "✓ Received +OK - Data sent successfully to address {}: '{}'",
-            address, data
-        );
     } else {
         eprintln!("Failed to send data to address {}", address);
     }
@@ -202,7 +197,6 @@ fn wait_for_response(port: &mut Box<dyn SerialPort>, expected: &str) -> bool {
             Ok(n) if n > 0 => {
                 if let Ok(s) = std::str::from_utf8(&serial_buf[..n]) {
                     buffer.push_str(s);
-                    println!("Received: {}", s.trim());
                     // Check if we have a complete line (ends with \r\n)
                     if buffer.ends_with("\r\n") {
                         let line = buffer.trim();
@@ -216,7 +210,6 @@ fn wait_for_response(port: &mut Box<dyn SerialPort>, expected: &str) -> bool {
 
                         // Check for expected response
                         if line.contains(expected) {
-                            println!("Got expected response: {line}");
                             return true;
                         }
 

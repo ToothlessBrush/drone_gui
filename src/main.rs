@@ -37,5 +37,6 @@ fn main() {
         .insert_resource(app::AppState::default())
         .insert_resource(app::HeartbeatTimer::default())
         .insert_resource(app::ControllerState::default())
+        .insert_resource(app::CommandQueue::default())
         .run();
 }
