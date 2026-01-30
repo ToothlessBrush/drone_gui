@@ -44,6 +44,15 @@ pub struct PIDTunePacket {
     pub axis: u8,
 }
 
+#[repr(C, packed)]
+#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
+pub struct MotorThrottlePacket {
+    pub motor1: f32,
+    pub motor2: f32,
+    pub motor3: f32,
+    pub motor4: f32,
+}
+
 pub struct PIDController {
     pub p: f32,
     pub i: f32,
@@ -72,10 +81,12 @@ pub enum CommandType {
     Start,
     Stop,
     EmergencyStop,
+    StartManual,
     SetThrottle(ThrottlePacket),
     SetPoint(SetpointPacket),
     TunePID(PIDTunePacket),
     HeartBeat(HeartBeatPacket),
+    SetMotorThrottle(MotorThrottlePacket),
     Calibrate,
     Reset,
 }
@@ -87,6 +98,7 @@ impl CommandType {
             CommandType::Start => "FC:START".to_string(),
             CommandType::Stop => "FC:STOP".to_string(),
             CommandType::EmergencyStop => "FC:EMERGENCY".to_string(),
+            CommandType::StartManual => "FC:MANUAL".to_string(),
             CommandType::Calibrate => "FC:CALIBRATE".to_string(),
             CommandType::Reset => "FC:RESET".to_string(),
 
@@ -95,6 +107,7 @@ impl CommandType {
             CommandType::SetPoint(point) => format!("SP:{}", point.to_hex()),
             CommandType::HeartBeat(beat) => format!("HB:{}", beat.to_hex()),
             CommandType::TunePID(tune) => format!("TP:{}", tune.to_hex()),
+            CommandType::SetMotorThrottle(mt) => format!("MB:{}", mt.to_hex()),
         }
     }
 }
@@ -111,6 +124,11 @@ pub fn send_command_stop(queue: &CommandQueue, address: u16) -> Result<(), Strin
 
 pub fn send_command_emergency_stop(queue: &CommandQueue, address: u16) -> Result<(), String> {
     queue.enqueue(address, CommandType::EmergencyStop.to_ascii());
+    Ok(())
+}
+
+pub fn send_command_start_manual(queue: &CommandQueue, address: u16) -> Result<(), String> {
+    queue.enqueue(address, CommandType::StartManual.to_ascii());
     Ok(())
 }
 
@@ -168,6 +186,24 @@ pub fn send_command_tune_pid(
             i_limit: pid.i_limit,
             pid_limit: pid.pid_limit,
             axis: axis as u8,
+        })
+        .to_ascii(),
+    );
+    Ok(())
+}
+
+pub fn send_command_set_motor_throttle(
+    queue: &CommandQueue,
+    address: u16,
+    motor_throttles: [f32; 4],
+) -> Result<(), String> {
+    queue.enqueue(
+        address,
+        CommandType::SetMotorThrottle(MotorThrottlePacket {
+            motor1: motor_throttles[0],
+            motor2: motor_throttles[1],
+            motor3: motor_throttles[2],
+            motor4: motor_throttles[3],
         })
         .to_ascii(),
     );
