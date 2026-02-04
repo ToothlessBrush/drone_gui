@@ -99,6 +99,7 @@ pub struct DataBuffer {
     pub data: VecDeque<TelemetryData>,
     pub logs: VecDeque<LogMessage>,
     start_time: std::time::Instant,
+    pub config_requested: bool,
 }
 
 impl DataBuffer {
@@ -107,6 +108,7 @@ impl DataBuffer {
             data: VecDeque::with_capacity(MAX_POINTS),
             logs: VecDeque::with_capacity(MAX_LOG_MESSAGES),
             start_time: std::time::Instant::now(),
+            config_requested: false,
         }
     }
 

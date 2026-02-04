@@ -43,3 +43,9 @@ pub fn parse_telemetry(line: &str) -> Option<TelemetryData> {
 pub fn parse_log(line: &str) -> Option<String> {
     line.strip_prefix("LOG:").map(str::to_string)
 }
+
+/// Check if the message is a GET_CONFIG command
+/// Format: "CMD:GET_CONFIG"
+pub fn is_get_config_command(line: &str) -> bool {
+    line == "CMD:GET_CONFIG"
+}

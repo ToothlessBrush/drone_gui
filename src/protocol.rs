@@ -53,6 +53,37 @@ pub struct MotorThrottlePacket {
     pub motor4: f32,
 }
 
+#[repr(C, packed)]
+#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
+pub struct ConfigPacket {
+    // motor bias
+    pub motor1: f32,
+    pub motor2: f32,
+    pub motor3: f32,
+    pub motor4: f32,
+
+    // PID terms for roll
+    pub roll_kp: f32,
+    pub roll_ki: f32,
+    pub roll_kd: f32,
+    pub roll_i_limit: f32,
+    pub roll_pid_limit: f32,
+
+    // PID terms for pitch
+    pub pitch_kp: f32,
+    pub pitch_ki: f32,
+    pub pitch_kd: f32,
+    pub pitch_i_limit: f32,
+    pub pitch_pid_limit: f32,
+
+    // PID terms for yaw
+    pub yaw_kp: f32,
+    pub yaw_ki: f32,
+    pub yaw_kd: f32,
+    pub yaw_i_limit: f32,
+    pub yaw_pid_limit: f32,
+}
+
 pub struct PIDController {
     pub p: f32,
     pub i: f32,
@@ -67,6 +98,12 @@ pub enum Axis {
     Pitch = 0x0,
     Roll = 0x1,
     Yaw = 0x2,
+}
+
+impl Default for Axis {
+    fn default() -> Self {
+        Self::Roll
+    }
 }
 
 pub struct Attitude {
@@ -87,6 +124,7 @@ pub enum CommandType {
     TunePID(PIDTunePacket),
     HeartBeat(HeartBeatPacket),
     SetMotorThrottle(MotorThrottlePacket),
+    Config(ConfigPacket),
     Calibrate,
     Reset,
 }
@@ -108,37 +146,38 @@ impl CommandType {
             CommandType::HeartBeat(beat) => format!("HB:{}", beat.to_hex()),
             CommandType::TunePID(tune) => format!("TP:{}", tune.to_hex()),
             CommandType::SetMotorThrottle(mt) => format!("MB:{}", mt.to_hex()),
+            CommandType::Config(config) => format!("CF:{}", config.to_hex()),
         }
     }
 }
 
 pub fn send_command_start(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Start.to_ascii());
+    queue.enqueue(address, CommandType::Start);
     Ok(())
 }
 
 pub fn send_command_stop(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Stop.to_ascii());
+    queue.enqueue(address, CommandType::Stop);
     Ok(())
 }
 
 pub fn send_command_emergency_stop(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::EmergencyStop.to_ascii());
+    queue.enqueue(address, CommandType::EmergencyStop);
     Ok(())
 }
 
 pub fn send_command_start_manual(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::StartManual.to_ascii());
+    queue.enqueue(address, CommandType::StartManual);
     Ok(())
 }
 
 pub fn send_command_calibrate(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Calibrate.to_ascii());
+    queue.enqueue(address, CommandType::Calibrate);
     Ok(())
 }
 
 pub fn send_command_reset(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Reset.to_ascii());
+    queue.enqueue(address, CommandType::Reset);
     Ok(())
 }
 
@@ -149,7 +188,7 @@ pub fn send_command_set_throttle(
 ) -> Result<(), String> {
     queue.enqueue(
         address,
-        CommandType::SetThrottle(ThrottlePacket(throttle_value)).to_ascii(),
+        CommandType::SetThrottle(ThrottlePacket(throttle_value)),
     );
     Ok(())
 }
@@ -165,8 +204,7 @@ pub fn send_command_set_point(
             roll: attitude.roll,
             pitch: attitude.pitch,
             yaw: attitude.yaw,
-        })
-        .to_ascii(),
+        }),
     );
     Ok(())
 }
@@ -186,8 +224,7 @@ pub fn send_command_tune_pid(
             i_limit: pid.i_limit,
             pid_limit: pid.pid_limit,
             axis: axis as u8,
-        })
-        .to_ascii(),
+        }),
     );
     Ok(())
 }
@@ -204,8 +241,16 @@ pub fn send_command_set_motor_throttle(
             motor2: motor_throttles[1],
             motor3: motor_throttles[2],
             motor4: motor_throttles[3],
-        })
-        .to_ascii(),
+        }),
     );
+    Ok(())
+}
+
+pub fn send_command_config(
+    queue: &CommandQueue,
+    address: u16,
+    config: ConfigPacket,
+) -> Result<(), String> {
+    queue.enqueue(address, CommandType::Config(config));
     Ok(())
 }

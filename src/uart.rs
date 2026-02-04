@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::*;
-use crate::parser::{parse_log, parse_rcv, parse_telemetry};
+use crate::parser::{is_get_config_command, parse_log, parse_rcv, parse_telemetry};
 use crate::telemetry::DataBuffer;
 
 pub enum UartCommand {
@@ -139,6 +139,13 @@ fn process_line(line: &str, data_buffer: &Arc<Mutex<DataBuffer>>) {
     let Ok(mut buf) = data_buffer.lock() else {
         return;
     };
+
+    // Check for GET_CONFIG command
+    if is_get_config_command(&rcv.message) {
+        buf.config_requested = true;
+        buf.push_log("Received GET_CONFIG command from flight controller".to_string());
+        return;
+    }
 
     // Parse string-based telemetry and log messages
     if let Some(telem) = parse_telemetry(&rcv.message) {

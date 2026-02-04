@@ -29,19 +29,26 @@ impl Default for HeartbeatTimer {
 
 #[derive(Resource, Default)]
 pub struct CommandQueue {
-    pub queue: Arc<Mutex<VecDeque<(u16, String)>>>,
+    pub queue: Arc<Mutex<VecDeque<(u16, protocol::CommandType)>>>,
 }
 
 impl CommandQueue {
-    pub fn enqueue(&self, address: u16, data: String) {
+    pub fn enqueue(&self, address: u16, command: protocol::CommandType) {
         if let Ok(mut queue) = self.queue.lock() {
-            queue.push_back((address, data));
+            // Remove any existing command of the same type
+            let cmd_discriminant = std::mem::discriminant(&command);
+            queue.retain(|(_, existing_cmd)| {
+                std::mem::discriminant(existing_cmd) != cmd_discriminant
+            });
+
+            // Add the new command
+            queue.push_back((address, command));
         }
     }
 
     pub fn dequeue(&self) -> Option<(u16, String)> {
         if let Ok(mut queue) = self.queue.lock() {
-            queue.pop_front()
+            queue.pop_front().map(|(addr, cmd)| (addr, cmd.to_ascii()))
         } else {
             None
         }
@@ -55,6 +62,8 @@ pub struct ControllerState {
     pub yaw: f32,
     pub throttle: f32,
     pub master_motor_throttle: f32,
+    pub motor_13_throttle: f32,
+    pub motor_24_throttle: f32,
     pub motor_throttles: [f32; 4],
 }
 
@@ -66,7 +75,26 @@ impl Default for ControllerState {
             yaw: 0.0,
             throttle: 0.0,
             master_motor_throttle: 0.0,
+            motor_13_throttle: 0.0,
+            motor_24_throttle: 0.0,
             motor_throttles: [0.0; 4],
+        }
+    }
+}
+
+impl ControllerState {
+    /// Create ControllerState from saved persistent settings
+    pub fn from_persistent(settings: &crate::persistence::PersistentSettings) -> Self {
+        let throttles = settings.motor_throttles;
+        Self {
+            roll: 0.0,
+            pitch: 0.0,
+            yaw: 0.0,
+            throttle: 0.0,
+            master_motor_throttle: throttles[0], // Use motor 1 as master default
+            motor_13_throttle: throttles[0],
+            motor_24_throttle: throttles[1],
+            motor_throttles: throttles,
         }
     }
 }
@@ -88,13 +116,6 @@ pub struct AppState {
     pub viewport_texture_id: Option<egui::TextureId>,
     pub available_ports: Vec<String>,
     pub show_pid_tuning: bool,
-    // PID tuning fields
-    pub pid_tune_p: f32,
-    pub pid_tune_i: f32,
-    pub pid_tune_d: f32,
-    pub pid_tune_i_limit: f32,
-    pub pid_tune_pid_limit: f32,
-    pub pid_tune_axis: protocol::Axis,
 }
 
 impl Default for AppState {
@@ -127,19 +148,16 @@ impl Default for AppState {
             video_device_path: "/dev/video2".to_string(),
             viewport_texture_id: None,
             show_pid_tuning: false,
-            // Initialize PID tuning with sensible defaults
-            pid_tune_p: 1.0,
-            pid_tune_i: 0.0,
-            pid_tune_d: 0.0,
-            pid_tune_i_limit: 10.0,
-            pid_tune_pid_limit: 100.0,
-            pid_tune_axis: protocol::Axis::Roll,
         }
     }
 }
 
 impl AppState {
-    fn start_uart_thread(&mut self) -> Result<(), String> {
+    fn start_uart_thread(
+        &mut self,
+        command_queue: &crate::app::CommandQueue,
+        persistent_settings: &crate::persistence::PersistentSettings,
+    ) -> Result<(), String> {
         if self.serial_connected {
             return Ok(());
         }
@@ -151,6 +169,17 @@ impl AppState {
             Ok(sender) => {
                 self.uart_sender = Some(sender);
                 self.serial_connected = true;
+
+                // Queue config command on startup
+                if let Ok(address) = self.send_address.parse::<u16>() {
+                    let config_packet = persistent_settings.to_config_packet();
+                    if let Err(e) =
+                        protocol::send_command_config(command_queue, address, config_packet)
+                    {
+                        eprintln!("Failed to queue config command on startup: {}", e);
+                    }
+                }
+
                 Ok(())
             }
             Err(e) => {
@@ -211,6 +240,7 @@ pub fn ui_system(
     mut drone_query: Query<&mut DroneOrientation, With<Drone>>,
     viewport_image: Res<ViewportImage>,
     command_queue: Res<CommandQueue>,
+    mut persistent_settings: ResMut<crate::persistence::PersistentSettings>,
 ) {
     // Register the viewport image with egui context if not already done
     if state.viewport_texture_id.is_none() {
@@ -291,7 +321,7 @@ pub fn ui_system(
                     }
                 } else {
                     if ui.button("Connect").clicked() {
-                        match state.start_uart_thread() {
+                        match state.start_uart_thread(&command_queue, &persistent_settings) {
                             Ok(()) => {
                                 // Success notification already in uart module
                             }
@@ -471,9 +501,7 @@ pub fn ui_system(
                                     if let Ok(address) = state.send_address.parse::<u16>() {
                                         ui.horizontal(|ui| {
                                             if ui.button("Start").clicked() {
-                                                control.throttle = 0.0;
-                                                control.master_motor_throttle = 0.0;
-                                                control.motor_throttles = [0.0; 4];
+                                                persistent_settings.is_manual_mode = false;
                                                 if let Err(e) = protocol::send_command_start(
                                                     &command_queue,
                                                     address,
@@ -486,6 +514,13 @@ pub fn ui_system(
                                         ui.add_space(3.0);
                                         ui.horizontal(|ui| {
                                             if ui.button("Start Manual").clicked() {
+                                                persistent_settings.is_manual_mode = true;
+                                                // Reset all throttles when entering manual mode
+                                                control.throttle = 0.0;
+                                                control.master_motor_throttle = 0.0;
+                                                control.motor_13_throttle = 0.0;
+                                                control.motor_24_throttle = 0.0;
+                                                control.motor_throttles = [0.0; 4];
                                                 if let Err(e) = protocol::send_command_start_manual(
                                                     &command_queue,
                                                     address,
@@ -498,9 +533,6 @@ pub fn ui_system(
                                         ui.add_space(3.0);
                                         ui.horizontal(|ui| {
                                             if ui.button("Stop").clicked() {
-                                                control.throttle = 0.0;
-                                                control.master_motor_throttle = 0.0;
-                                                control.motor_throttles = [0.0; 4];
                                                 if let Err(e) = protocol::send_command_stop(
                                                     &command_queue,
                                                     address,
@@ -514,9 +546,6 @@ pub fn ui_system(
 
                                         ui.horizontal(|ui| {
                                             if ui.button("Emergency Stop").clicked() {
-                                                control.throttle = 0.0;
-                                                control.master_motor_throttle = 0.0;
-                                                control.motor_throttles = [0.0; 4];
                                                 if let Err(e) =
                                                     protocol::send_command_emergency_stop(
                                                         &command_queue,
@@ -564,58 +593,164 @@ pub fn ui_system(
                                         ui.separator();
                                         ui.label("Motor Throttles");
                                         let mut master_clone = control.master_motor_throttle;
-                                        let master_changed = ui.add(Slider::new(&mut master_clone, 0.0..=1.0).text("Master")).changed();
+                                        let master_changed = ui
+                                            .add(
+                                                Slider::new(&mut master_clone, 0.0..=1.0)
+                                                    .text("Master"),
+                                            )
+                                            .changed();
                                         if master_changed {
                                             control.master_motor_throttle = master_clone;
                                             control.motor_throttles = [master_clone; 4];
-                                            if let Err(e) = protocol::send_command_set_motor_throttle(
-                                                &command_queue,
-                                                address,
-                                                control.motor_throttles,
-                                            ) {
+                                            persistent_settings.motor_throttles =
+                                                control.motor_throttles;
+                                            if let Err(e) =
+                                                protocol::send_command_set_motor_throttle(
+                                                    &command_queue,
+                                                    address,
+                                                    control.motor_throttles,
+                                                )
+                                            {
+                                                eprintln!("Failed to send motor throttle: {}", e);
+                                            }
+                                        }
+
+                                        let mut motor_13_clone = control.motor_13_throttle;
+                                        if ui
+                                            .add(
+                                                Slider::new(&mut motor_13_clone, 0.0..=1.0)
+                                                    .text("Motors 1 & 3"),
+                                            )
+                                            .changed()
+                                        {
+                                            control.motor_13_throttle = motor_13_clone;
+                                            control.motor_throttles[0] = motor_13_clone;
+                                            control.motor_throttles[2] = motor_13_clone;
+                                            persistent_settings.motor_throttles =
+                                                control.motor_throttles;
+                                            if let Err(e) =
+                                                protocol::send_command_set_motor_throttle(
+                                                    &command_queue,
+                                                    address,
+                                                    control.motor_throttles,
+                                                )
+                                            {
+                                                eprintln!("Failed to send motor throttle: {}", e);
+                                            }
+                                        }
+
+                                        let mut motor_24_clone = control.motor_24_throttle;
+                                        if ui
+                                            .add(
+                                                Slider::new(&mut motor_24_clone, 0.0..=1.0)
+                                                    .text("Motors 2 & 4"),
+                                            )
+                                            .changed()
+                                        {
+                                            control.motor_24_throttle = motor_24_clone;
+                                            control.motor_throttles[1] = motor_24_clone;
+                                            control.motor_throttles[3] = motor_24_clone;
+                                            persistent_settings.motor_throttles =
+                                                control.motor_throttles;
+                                            if let Err(e) =
+                                                protocol::send_command_set_motor_throttle(
+                                                    &command_queue,
+                                                    address,
+                                                    control.motor_throttles,
+                                                )
+                                            {
                                                 eprintln!("Failed to send motor throttle: {}", e);
                                             }
                                         }
 
                                         let mut motor1_clone = control.motor_throttles[0];
-                                        if ui.add(Slider::new(&mut motor1_clone, 0.0..=1.0).text("Motor 1")).changed() {
+                                        if ui
+                                            .add(
+                                                Slider::new(&mut motor1_clone, 0.0..=1.0)
+                                                    .text("Motor 1"),
+                                            )
+                                            .changed()
+                                        {
                                             control.motor_throttles[0] = motor1_clone;
-                                            if let Err(e) = protocol::send_command_set_motor_throttle(
-                                                &command_queue,
-                                                address,
-                                                control.motor_throttles,
-                                            ) {
+                                            persistent_settings.motor_throttles =
+                                                control.motor_throttles;
+                                            if let Err(e) =
+                                                protocol::send_command_set_motor_throttle(
+                                                    &command_queue,
+                                                    address,
+                                                    control.motor_throttles,
+                                                )
+                                            {
                                                 eprintln!("Failed to send motor throttle: {}", e);
                                             }
                                         }
 
                                         let mut motor2_clone = control.motor_throttles[1];
-                                        if ui.add(Slider::new(&mut motor2_clone, 0.0..=1.0).text("Motor 2")).changed() {
+                                        if ui
+                                            .add(
+                                                Slider::new(&mut motor2_clone, 0.0..=1.0)
+                                                    .text("Motor 2"),
+                                            )
+                                            .changed()
+                                        {
                                             control.motor_throttles[1] = motor2_clone;
-                                            if let Err(e) = protocol::send_command_set_motor_throttle(
-                                                &command_queue,
-                                                address,
-                                                control.motor_throttles,
-                                            ) {
+                                            persistent_settings.motor_throttles =
+                                                control.motor_throttles;
+                                            if let Err(e) =
+                                                protocol::send_command_set_motor_throttle(
+                                                    &command_queue,
+                                                    address,
+                                                    control.motor_throttles,
+                                                )
+                                            {
                                                 eprintln!("Failed to send motor throttle: {}", e);
                                             }
                                         }
 
                                         let mut motor3_clone = control.motor_throttles[2];
-                                        if ui.add(Slider::new(&mut motor3_clone, 0.0..=1.0).text("Motor 3")).changed() {
+                                        if ui
+                                            .add(
+                                                Slider::new(&mut motor3_clone, 0.0..=1.0)
+                                                    .text("Motor 3"),
+                                            )
+                                            .changed()
+                                        {
                                             control.motor_throttles[2] = motor3_clone;
-                                            if let Err(e) = protocol::send_command_set_motor_throttle(
-                                                &command_queue,
-                                                address,
-                                                control.motor_throttles,
-                                            ) {
+                                            persistent_settings.motor_throttles =
+                                                control.motor_throttles;
+                                            if let Err(e) =
+                                                protocol::send_command_set_motor_throttle(
+                                                    &command_queue,
+                                                    address,
+                                                    control.motor_throttles,
+                                                )
+                                            {
                                                 eprintln!("Failed to send motor throttle: {}", e);
                                             }
                                         }
 
                                         // Motor 4 follows master
-                                        control.motor_throttles[3] = control.master_motor_throttle;
-
+                                        let mut motor4_clone = control.motor_throttles[3];
+                                        if ui
+                                            .add(
+                                                Slider::new(&mut motor4_clone, 0.0..=1.0)
+                                                    .text("Motor 4"),
+                                            )
+                                            .changed()
+                                        {
+                                            control.motor_throttles[3] = motor4_clone;
+                                            persistent_settings.motor_throttles =
+                                                control.motor_throttles;
+                                            if let Err(e) =
+                                                protocol::send_command_set_motor_throttle(
+                                                    &command_queue,
+                                                    address,
+                                                    control.motor_throttles,
+                                                )
+                                            {
+                                                eprintln!("Failed to send motor throttle: {}", e);
+                                            }
+                                        }
                                         ui.label("Set Point");
                                     } else {
                                         ui.label("Enter valid address to enable commands");
@@ -758,19 +893,35 @@ pub fn ui_system(
                 // Axis selection
                 ui.horizontal(|ui| {
                     ui.label("Axis:");
-                    ui.selectable_value(&mut state.pid_tune_axis, protocol::Axis::Roll, "Roll");
-                    ui.selectable_value(&mut state.pid_tune_axis, protocol::Axis::Pitch, "Pitch");
-                    ui.selectable_value(&mut state.pid_tune_axis, protocol::Axis::Yaw, "Yaw");
+                    ui.selectable_value(
+                        &mut persistent_settings.selected_tune_axis,
+                        protocol::Axis::Roll,
+                        "Roll",
+                    );
+                    ui.selectable_value(
+                        &mut persistent_settings.selected_tune_axis,
+                        protocol::Axis::Pitch,
+                        "Pitch",
+                    );
+                    ui.selectable_value(
+                        &mut persistent_settings.selected_tune_axis,
+                        protocol::Axis::Yaw,
+                        "Yaw",
+                    );
                 });
 
                 ui.separator();
+
+                // Get mutable reference to the selected axis PID parameters
+                let selected_axis = persistent_settings.selected_tune_axis;
+                let pid_params = persistent_settings.get_pid_mut(selected_axis);
 
                 // PID parameters
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("P (Proportional):");
                     ui.add(
-                        egui::DragValue::new(&mut state.pid_tune_p)
+                        egui::DragValue::new(&mut pid_params.p)
                             .speed(0.01)
                             .range(0.0..=20.0),
                     );
@@ -779,7 +930,7 @@ pub fn ui_system(
                 ui.horizontal(|ui| {
                     ui.label("I (Integral):");
                     ui.add(
-                        egui::DragValue::new(&mut state.pid_tune_i)
+                        egui::DragValue::new(&mut pid_params.i)
                             .speed(0.001)
                             .range(0.0..=2.0),
                     );
@@ -788,7 +939,7 @@ pub fn ui_system(
                 ui.horizontal(|ui| {
                     ui.label("D (Derivative):");
                     ui.add(
-                        egui::DragValue::new(&mut state.pid_tune_d)
+                        egui::DragValue::new(&mut pid_params.d)
                             .speed(0.001)
                             .range(0.0..=2.0),
                     );
@@ -801,7 +952,7 @@ pub fn ui_system(
                 ui.horizontal(|ui| {
                     ui.label("I Limit:");
                     ui.add(
-                        egui::DragValue::new(&mut state.pid_tune_i_limit)
+                        egui::DragValue::new(&mut pid_params.i_limit)
                             .speed(0.1)
                             .range(0.0..=50.0),
                     );
@@ -810,7 +961,7 @@ pub fn ui_system(
                 ui.horizontal(|ui| {
                     ui.label("PID Limit:");
                     ui.add(
-                        egui::DragValue::new(&mut state.pid_tune_pid_limit)
+                        egui::DragValue::new(&mut pid_params.pid_limit)
                             .speed(0.1)
                             .range(0.0..=100.0),
                     );
@@ -823,35 +974,34 @@ pub fn ui_system(
                 ui.horizontal(|ui| {
                     if ui.button("Send Tune").clicked() {
                         if let Ok(address) = state.send_address.parse::<u16>() {
+                            let selected_axis = persistent_settings.selected_tune_axis;
+                            let pid_params = persistent_settings.get_pid(selected_axis);
                             let pid = protocol::PIDController {
-                                p: state.pid_tune_p,
-                                i: state.pid_tune_i,
-                                d: state.pid_tune_d,
-                                i_limit: state.pid_tune_i_limit,
-                                pid_limit: state.pid_tune_pid_limit,
+                                p: pid_params.p,
+                                i: pid_params.i,
+                                d: pid_params.d,
+                                i_limit: pid_params.i_limit,
+                                pid_limit: pid_params.pid_limit,
                             };
 
                             if let Err(e) = protocol::send_command_tune_pid(
                                 &command_queue,
                                 address,
-                                state.pid_tune_axis,
+                                selected_axis,
                                 pid,
                             ) {
                                 eprintln!("Failed to send PID tune command: {}", e);
                             } else {
                                 // Log success
                                 if let Ok(mut buffer) = state.data_buffer.lock() {
-                                    let axis_name = match state.pid_tune_axis {
+                                    let axis_name = match selected_axis {
                                         protocol::Axis::Roll => "Roll",
                                         protocol::Axis::Pitch => "Pitch",
                                         protocol::Axis::Yaw => "Yaw",
                                     };
                                     buffer.push_log(format!(
                                         "PID tune sent for {}: P={:.2}, I={:.2}, D={:.2}",
-                                        axis_name,
-                                        state.pid_tune_p,
-                                        state.pid_tune_i,
-                                        state.pid_tune_d
+                                        axis_name, pid_params.p, pid_params.i, pid_params.d
                                     ));
                                 }
                             }
@@ -887,14 +1037,14 @@ pub fn controller_input_system(
     };
 
     // Left stick Y-axis: pitch (inverted so up is positive)
-    if let Some(value) = gamepad.get(GamepadAxis::LeftStickY) {
-        controller_state.pitch = -value; // Invert Y axis
-    }
+    // if let Some(value) = gamepad.get(GamepadAxis::LeftStickY) {
+    //     controller_state.pitch = -value; // Invert Y axis
+    // }
 
     // Left stick X-axis: yaw
-    if let Some(value) = gamepad.get(GamepadAxis::LeftStickX) {
-        controller_state.yaw = value;
-    }
+    // if let Some(value) = gamepad.get(GamepadAxis::LeftStickX) {
+    //     controller_state.yaw = value;
+    // }
 
     // Right stick Y-axis: throttle adjustment (up increases, down decreases)
     if let Some(value) = gamepad.get(GamepadAxis::RightStickY) {
@@ -904,9 +1054,9 @@ pub fn controller_input_system(
     }
 
     // Right stick X-axis: roll
-    if let Some(value) = gamepad.get(GamepadAxis::RightStickX) {
-        controller_state.roll = value;
-    }
+    // if let Some(value) = gamepad.get(GamepadAxis::RightStickX) {
+    //     controller_state.roll = value;
+    // }
 
     if gamepad.pressed(GamepadButton::Start)
         && let Err(e) = protocol::send_command_emergency_stop(&command_queue, 2)
@@ -922,10 +1072,28 @@ pub fn heartbeat_system(
     state: Res<AppState>,
     controller_state: Res<ControllerState>,
     command_queue: Res<CommandQueue>,
+    persistent_settings: Res<crate::persistence::PersistentSettings>,
 ) {
     // Only send if UART is connected
     if !state.serial_connected {
         return;
+    }
+
+    // Check if config was requested
+    if let Ok(mut buffer) = state.data_buffer.lock() {
+        if buffer.config_requested {
+            buffer.config_requested = false;
+            if let Ok(address) = state.send_address.parse::<u16>() {
+                let config_packet = persistent_settings.to_config_packet();
+                if let Err(e) =
+                    protocol::send_command_config(&command_queue, address, config_packet)
+                {
+                    eprintln!("Failed to queue config command: {}", e);
+                } else {
+                    buffer.push_log("Queued config response".to_string());
+                }
+            }
+        }
     }
 
     heartbeat_timer.timer.tick(time.delta());

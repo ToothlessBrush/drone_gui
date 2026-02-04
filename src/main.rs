@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod drone_scene;
 mod parser;
+mod persistence;
 mod protocol;
 mod telemetry;
 mod uart;
@@ -34,9 +35,14 @@ fn main() {
         )
         .add_systems(Update, app::heartbeat_system)
         .add_systems(Update, app::controller_input_system)
+        .add_systems(Update, persistence::auto_save_system)
         .insert_resource(app::AppState::default())
         .insert_resource(app::HeartbeatTimer::default())
-        .insert_resource(app::ControllerState::default())
         .insert_resource(app::CommandQueue::default())
+        .insert_resource({
+            let settings = persistence::PersistentSettings::load();
+            app::ControllerState::from_persistent(&settings)
+        })
+        .insert_resource(persistence::PersistentSettings::load())
         .run();
 }
