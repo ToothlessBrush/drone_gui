@@ -156,10 +156,10 @@ impl PersistentSettings {
     /// Convert settings to ConfigPacket for sending to flight controller
     pub fn to_config_packet(&self) -> protocol::ConfigPacket {
         protocol::ConfigPacket {
-            motor1: self.motor_bias.motor1,
-            motor2: self.motor_bias.motor2,
-            motor3: self.motor_bias.motor3,
-            motor4: self.motor_bias.motor4,
+            motor1: self.motor_throttles[0],
+            motor2: self.motor_throttles[1],
+            motor3: self.motor_throttles[2],
+            motor4: self.motor_throttles[3],
             roll_kp: self.pid_roll.p,
             roll_ki: self.pid_roll.i,
             roll_kd: self.pid_roll.d,
