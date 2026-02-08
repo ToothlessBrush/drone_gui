@@ -34,7 +34,7 @@ fn video_capture_loop(
     frame_buffer: SharedVideoFrame,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Open the video device
-    let mut ictx = ffmpeg::format::input(&device_path).inspect_err(|e| {
+    let mut ictx = ffmpeg::format::input(device_path).inspect_err(|e| {
         eprintln!("Failed to open device {}: {}", device_path, e);
     })?;
 
@@ -101,8 +101,8 @@ fn video_capture_loop(
     // Process packets
     let mut frame_count = 0;
     for result in ictx.packets() {
-        if let Ok((stream, packet)) = result {
-            if stream.index() == stream_index {
+        if let Ok((stream, packet)) = result
+            && stream.index() == stream_index {
                 // Try to send packet, but skip if it fails (corrupted data)
                 if let Err(e) = decoder.send_packet(&packet) {
                     eprintln!(
@@ -135,7 +135,6 @@ fn video_capture_loop(
                     frame_count += 1;
                 }
             }
-        }
     }
 
     Ok(())

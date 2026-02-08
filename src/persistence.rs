@@ -181,9 +181,8 @@ impl PersistentSettings {
 
 /// System that automatically saves settings when they change
 pub fn auto_save_system(settings: Res<PersistentSettings>) {
-    if settings.is_changed() && !settings.is_added() {
-        if let Err(e) = settings.save() {
+    if settings.is_changed() && !settings.is_added()
+        && let Err(e) = settings.save() {
             eprintln!("Failed to auto-save settings: {}", e);
         }
-    }
 }

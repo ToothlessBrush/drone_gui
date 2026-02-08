@@ -93,19 +93,15 @@ pub struct PIDController {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum Axis {
     Pitch = 0x0,
+    #[default]
     Roll = 0x1,
     Yaw = 0x2,
 }
 
-impl Default for Axis {
-    fn default() -> Self {
-        Self::Roll
-    }
-}
-
+#[allow(unused)]
 pub struct Attitude {
     pub roll: f32,
     pub pitch: f32,
@@ -119,7 +115,9 @@ pub enum CommandType {
     Stop,
     EmergencyStop,
     StartManual,
+    #[allow(unused)]
     SetThrottle(ThrottlePacket),
+    #[allow(unused)]
     SetPoint(SetpointPacket),
     TunePID(PIDTunePacket),
     HeartBeat(HeartBeatPacket),
@@ -130,12 +128,12 @@ pub enum CommandType {
 }
 
 impl CommandType {
-    pub fn to_ascii(&self) -> String {
+    pub fn get_ascii(&self) -> String {
         match self {
             // base commands
             CommandType::Start => "FC:START".to_string(),
             CommandType::Stop => "FC:STOP".to_string(),
-            CommandType::EmergencyStop => "FC:EMERGENCY".to_string(),
+            CommandType::EmergencyStop => "ES".to_string(),
             CommandType::StartManual => "FC:MANUAL".to_string(),
             CommandType::Calibrate => "FC:CALIBRATE".to_string(),
             CommandType::Reset => "FC:RESET".to_string(),
@@ -181,6 +179,7 @@ pub fn send_command_reset(queue: &CommandQueue, address: u16) -> Result<(), Stri
     Ok(())
 }
 
+#[allow(unused)]
 pub fn send_command_set_throttle(
     queue: &CommandQueue,
     address: u16,
@@ -193,6 +192,7 @@ pub fn send_command_set_throttle(
     Ok(())
 }
 
+#[allow(unused)]
 pub fn send_command_set_point(
     queue: &CommandQueue,
     address: u16,

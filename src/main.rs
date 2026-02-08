@@ -1,11 +1,13 @@
 mod app;
 mod config;
 mod drone_scene;
+mod input;
 mod parser;
 mod persistence;
 mod protocol;
 mod telemetry;
 mod uart;
+mod ui;
 mod video;
 
 use bevy::prelude::*;
@@ -31,10 +33,10 @@ fn main() {
         .add_systems(Update, drone_scene::update_drone_orientation)
         .add_systems(
             Update,
-            app::ui_system.after(drone_scene::update_drone_orientation),
+            ui::ui_system.after(drone_scene::update_drone_orientation),
         )
         .add_systems(Update, app::heartbeat_system)
-        .add_systems(Update, app::controller_input_system)
+        .add_systems(Update, input::controller_input_system)
         .add_systems(Update, persistence::auto_save_system)
         .insert_resource(app::AppState::default())
         .insert_resource(app::HeartbeatTimer::default())

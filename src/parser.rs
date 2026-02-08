@@ -23,9 +23,9 @@ pub fn parse_rcv(line: &str) -> Option<ReceivedMessage> {
 
 /// Parse telemetry from serial data
 pub fn parse_telemetry(line: &str) -> Option<TelemetryData> {
-    let mut parts = line.splitn(2, ':');
-    let header = parts.next()?;
-    let hex = parts.next()?;
+    let (header, hex) = line.split_once(':')?;
+    
+    
 
     if header != "T" {
         return None;
