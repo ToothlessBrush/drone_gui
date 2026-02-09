@@ -58,6 +58,10 @@ pub struct PersistentSettings {
     pub pid_pitch: PidParameters,
     #[serde(default)]
     pub pid_yaw: PidParameters,
+    #[serde(default)]
+    pub pid_velocity_x: PidParameters,
+    #[serde(default)]
+    pub pid_velocity_y: PidParameters,
 
     // Individual motor throttle values
     #[serde(default)]
@@ -65,7 +69,7 @@ pub struct PersistentSettings {
 
     // Currently selected axis for tuning (not persisted, just for UI state)
     #[serde(skip)]
-    pub selected_tune_axis: protocol::Axis,
+    pub selected_tune_axis: protocol::SelectPID,
 
     // Track if we're in manual mode (not serialized)
     #[serde(skip)]
@@ -79,8 +83,10 @@ impl Default for PersistentSettings {
             pid_roll: PidParameters::default(),
             pid_pitch: PidParameters::default(),
             pid_yaw: PidParameters::default(),
+            pid_velocity_x: PidParameters::default(),
+            pid_velocity_y: PidParameters::default(),
             motor_throttles: [0.0; 4],
-            selected_tune_axis: protocol::Axis::Roll,
+            selected_tune_axis: protocol::SelectPID::Roll,
             is_manual_mode: false,
         }
     }
@@ -136,20 +142,24 @@ impl PersistentSettings {
     }
 
     /// Get PID parameters for a specific axis
-    pub fn get_pid(&self, axis: protocol::Axis) -> &PidParameters {
+    pub fn get_pid(&self, axis: protocol::SelectPID) -> &PidParameters {
         match axis {
-            protocol::Axis::Roll => &self.pid_roll,
-            protocol::Axis::Pitch => &self.pid_pitch,
-            protocol::Axis::Yaw => &self.pid_yaw,
+            protocol::SelectPID::Roll => &self.pid_roll,
+            protocol::SelectPID::Pitch => &self.pid_pitch,
+            protocol::SelectPID::Yaw => &self.pid_yaw,
+            protocol::SelectPID::VelocityX => &self.pid_velocity_x,
+            protocol::SelectPID::VelocityY => &self.pid_velocity_y,
         }
     }
 
     /// Get mutable PID parameters for a specific axis
-    pub fn get_pid_mut(&mut self, axis: protocol::Axis) -> &mut PidParameters {
+    pub fn get_pid_mut(&mut self, axis: protocol::SelectPID) -> &mut PidParameters {
         match axis {
-            protocol::Axis::Roll => &mut self.pid_roll,
-            protocol::Axis::Pitch => &mut self.pid_pitch,
-            protocol::Axis::Yaw => &mut self.pid_yaw,
+            protocol::SelectPID::Roll => &mut self.pid_roll,
+            protocol::SelectPID::Pitch => &mut self.pid_pitch,
+            protocol::SelectPID::Yaw => &mut self.pid_yaw,
+            protocol::SelectPID::VelocityX => &mut self.pid_velocity_x,
+            protocol::SelectPID::VelocityY => &mut self.pid_velocity_y,
         }
     }
 
@@ -175,14 +185,26 @@ impl PersistentSettings {
             yaw_kd: self.pid_yaw.d,
             yaw_i_limit: self.pid_yaw.i_limit,
             yaw_pid_limit: self.pid_yaw.pid_limit,
+            velocity_x_kp: self.pid_velocity_x.p,
+            velocity_x_ki: self.pid_velocity_x.i,
+            velocity_x_kd: self.pid_velocity_x.d,
+            velocity_x_i_limit: self.pid_velocity_x.i_limit,
+            velocity_x_pid_limit: self.pid_velocity_x.pid_limit,
+            velocity_y_kp: self.pid_velocity_y.p,
+            velocity_y_ki: self.pid_velocity_y.i,
+            velocity_y_kd: self.pid_velocity_y.d,
+            velocity_y_i_limit: self.pid_velocity_y.i_limit,
+            velocity_y_pid_limit: self.pid_velocity_y.pid_limit,
         }
     }
 }
 
 /// System that automatically saves settings when they change
 pub fn auto_save_system(settings: Res<PersistentSettings>) {
-    if settings.is_changed() && !settings.is_added()
-        && let Err(e) = settings.save() {
-            eprintln!("Failed to auto-save settings: {}", e);
-        }
+    if settings.is_changed()
+        && !settings.is_added()
+        && let Err(e) = settings.save()
+    {
+        eprintln!("Failed to auto-save settings: {}", e);
+    }
 }

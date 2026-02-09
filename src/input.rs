@@ -29,7 +29,7 @@ pub fn controller_input_system(
 
     // Left stick X-axis: yaw
     if let Some(value) = gamepad.get(GamepadAxis::LeftStickX) {
-        controller_state.yaw = value;
+        controller_state.roll = value * MAX_TILT_ANGLE;
     }
 
     // Right stick Y-axis: throttle adjustment (up increases, down decreases)
@@ -41,7 +41,7 @@ pub fn controller_input_system(
 
     // Right stick X-axis: roll
     if let Some(value) = gamepad.get(GamepadAxis::RightStickX) {
-        controller_state.roll = value * MAX_TILT_ANGLE;
+        controller_state.yaw = value;
     }
 
     if gamepad.pressed(GamepadButton::Start)

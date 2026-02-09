@@ -82,6 +82,20 @@ pub struct ConfigPacket {
     pub yaw_kd: f32,
     pub yaw_i_limit: f32,
     pub yaw_pid_limit: f32,
+
+    // PID terms for velocity x
+    pub velocity_x_kp: f32,
+    pub velocity_x_ki: f32,
+    pub velocity_x_kd: f32,
+    pub velocity_x_i_limit: f32,
+    pub velocity_x_pid_limit: f32,
+
+    // PID terms for velocity y
+    pub velocity_y_kp: f32,
+    pub velocity_y_ki: f32,
+    pub velocity_y_kd: f32,
+    pub velocity_y_i_limit: f32,
+    pub velocity_y_pid_limit: f32,
 }
 
 pub struct PIDController {
@@ -94,11 +108,13 @@ pub struct PIDController {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum Axis {
+pub enum SelectPID {
     Pitch = 0x0,
     #[default]
     Roll = 0x1,
     Yaw = 0x2,
+    VelocityX = 0x3,
+    VelocityY = 0x4,
 }
 
 #[allow(unused)]
@@ -212,7 +228,7 @@ pub fn send_command_set_point(
 pub fn send_command_tune_pid(
     queue: &CommandQueue,
     address: u16,
-    axis: Axis,
+    axis: SelectPID,
     pid: PIDController,
 ) -> Result<(), String> {
     queue.enqueue(

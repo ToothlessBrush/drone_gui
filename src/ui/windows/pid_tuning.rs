@@ -1,7 +1,7 @@
-use bevy_egui::egui;
 use crate::app::{AppState, CommandQueue};
 use crate::persistence::PersistentSettings;
 use crate::protocol;
+use bevy_egui::egui;
 
 /// Renders the PID tuning window
 pub fn render_pid_tuning_window(
@@ -52,18 +52,28 @@ fn render_axis_selection(ui: &mut egui::Ui, persistent_settings: &mut Persistent
         ui.label("Axis:");
         ui.selectable_value(
             &mut persistent_settings.selected_tune_axis,
-            protocol::Axis::Roll,
+            protocol::SelectPID::Roll,
             "Roll",
         );
         ui.selectable_value(
             &mut persistent_settings.selected_tune_axis,
-            protocol::Axis::Pitch,
+            protocol::SelectPID::Pitch,
             "Pitch",
         );
         ui.selectable_value(
             &mut persistent_settings.selected_tune_axis,
-            protocol::Axis::Yaw,
+            protocol::SelectPID::Yaw,
             "Yaw",
+        );
+        ui.selectable_value(
+            &mut persistent_settings.selected_tune_axis,
+            protocol::SelectPID::VelocityX,
+            "Velocity X",
+        );
+        ui.selectable_value(
+            &mut persistent_settings.selected_tune_axis,
+            protocol::SelectPID::VelocityY,
+            "Velocity Y",
         );
     });
 }
@@ -154,9 +164,11 @@ fn render_send_controls(
                     // Log success
                     if let Ok(mut buffer) = state.data_buffer.lock() {
                         let axis_name = match selected_axis {
-                            protocol::Axis::Roll => "Roll",
-                            protocol::Axis::Pitch => "Pitch",
-                            protocol::Axis::Yaw => "Yaw",
+                            protocol::SelectPID::Roll => "Roll",
+                            protocol::SelectPID::Pitch => "Pitch",
+                            protocol::SelectPID::Yaw => "Yaw",
+                            protocol::SelectPID::VelocityX => "Velocity X",
+                            protocol::SelectPID::VelocityY => "Velocity Y",
                         };
                         buffer.push_log(format!(
                             "PID tune sent for {}: P={:.2}, I={:.2}, D={:.2}",
