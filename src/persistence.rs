@@ -26,52 +26,8 @@ impl Default for PidParameters {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MotorBias {
-    pub motor1: f32,
-    pub motor2: f32,
-    pub motor3: f32,
-    pub motor4: f32,
-}
-
-impl Default for MotorBias {
-    fn default() -> Self {
-        Self {
-            motor1: 0.0,
-            motor2: 0.0,
-            motor3: 0.0,
-            motor4: 0.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetpointBias {
-    pub roll: f32,
-    pub pitch: f32,
-    pub yaw: f32,
-}
-
-impl Default for SetpointBias {
-    fn default() -> Self {
-        Self {
-            roll: 0.0,
-            pitch: 0.0,
-            yaw: 0.0,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Resource)]
 pub struct PersistentSettings {
-    // Motor bias values
-    #[serde(default)]
-    pub motor_bias: MotorBias,
-
-    // Setpoint bias values
-    #[serde(default)]
-    pub setpoint_bias: SetpointBias,
-
     // PID parameters for each axis
     #[serde(default)]
     pub pid_roll: PidParameters,
@@ -84,24 +40,18 @@ pub struct PersistentSettings {
     #[serde(default)]
     pub pid_velocity_y: PidParameters,
 
-    // Individual motor throttle values
+    // Motor bias values (trim per-motor)
     #[serde(default)]
     pub motor_throttles: [f32; 4],
 
     // Currently selected axis for tuning (not persisted, just for UI state)
     #[serde(skip)]
     pub selected_tune_axis: protocol::SelectPID,
-
-    // Track if we're in manual mode (not serialized)
-    #[serde(skip)]
-    pub is_manual_mode: bool,
 }
 
 impl Default for PersistentSettings {
     fn default() -> Self {
         Self {
-            motor_bias: MotorBias::default(),
-            setpoint_bias: SetpointBias::default(),
             pid_roll: PidParameters::default(),
             pid_pitch: PidParameters::default(),
             pid_yaw: PidParameters::default(),
@@ -109,26 +59,18 @@ impl Default for PersistentSettings {
             pid_velocity_y: PidParameters::default(),
             motor_throttles: [0.0; 4],
             selected_tune_axis: protocol::SelectPID::Roll,
-            is_manual_mode: false,
         }
     }
 }
 
 impl PersistentSettings {
-    /// Get the path to the settings file
     fn settings_path() -> PathBuf {
-        // Save settings in the user's config directory
         let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-
         let app_config_dir = config_dir.join("drone_gui");
-
-        // Create the directory if it doesn't exist
         let _ = fs::create_dir_all(&app_config_dir);
-
         app_config_dir.join("settings.json")
     }
 
-    /// Load settings from disk, or use defaults if file doesn't exist
     pub fn load() -> Self {
         let path = Self::settings_path();
 
@@ -150,7 +92,6 @@ impl PersistentSettings {
         }
     }
 
-    /// Save settings to disk
     pub fn save(&self) -> Result<(), String> {
         let path = Self::settings_path();
 
@@ -163,7 +104,6 @@ impl PersistentSettings {
         }
     }
 
-    /// Get PID parameters for a specific axis
     pub fn get_pid(&self, axis: protocol::SelectPID) -> &PidParameters {
         match axis {
             protocol::SelectPID::Roll => &self.pid_roll,
@@ -174,7 +114,6 @@ impl PersistentSettings {
         }
     }
 
-    /// Get mutable PID parameters for a specific axis
     pub fn get_pid_mut(&mut self, axis: protocol::SelectPID) -> &mut PidParameters {
         match axis {
             protocol::SelectPID::Roll => &mut self.pid_roll,
@@ -185,7 +124,6 @@ impl PersistentSettings {
         }
     }
 
-    /// Convert settings to ConfigPacket for sending to flight controller
     pub fn to_config_packet(&self) -> protocol::ConfigPacket {
         protocol::ConfigPacket {
             motor1: self.motor_throttles[0],
@@ -221,7 +159,6 @@ impl PersistentSettings {
     }
 }
 
-/// System that automatically saves settings when they change
 pub fn auto_save_system(settings: Res<PersistentSettings>) {
     if settings.is_changed()
         && !settings.is_added()

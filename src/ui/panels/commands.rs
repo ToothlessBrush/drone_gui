@@ -1,7 +1,7 @@
 use crate::app::{AppState, CommandQueue, ControllerState};
 use crate::persistence::PersistentSettings;
 use crate::protocol;
-use bevy_egui::egui::{self, DragValue, Slider};
+use bevy_egui::egui::{self, DragValue};
 
 /// Renders the flight controller commands section
 pub fn render_commands_section(
@@ -14,130 +14,55 @@ pub fn render_commands_section(
 ) {
     ui.vertical(|ui| {
         ui.set_width(width);
-        ui.heading("Flight Controller Commands");
+        ui.heading("FC Commands");
 
         if state.uart_sender.is_some() {
-            if let Ok(address) = state.send_address.parse::<u16>() {
-                render_command_buttons(ui, address, command_queue, persistent_settings, control);
-                ui.separator();
-                render_throttle_controls(ui, control, address, command_queue, persistent_settings);
-            } else {
-                ui.label("Enter valid address to enable commands");
-            }
+            render_command_buttons(ui, command_queue);
+            ui.separator();
+            render_motor_bias_controls(ui, control, command_queue, persistent_settings);
         } else {
             ui.label("Connect to serial port to enable commands");
         }
     });
 }
 
-/// Renders the flight command buttons
-fn render_command_buttons(
-    ui: &mut egui::Ui,
-    address: u16,
-    command_queue: &CommandQueue,
-    persistent_settings: &mut PersistentSettings,
-    control: &mut ControllerState,
-) {
+/// Calibrate IMU button
+fn render_command_buttons(ui: &mut egui::Ui, command_queue: &CommandQueue) {
     ui.horizontal(|ui| {
-        if ui.button("Start").clicked() {
-            persistent_settings.is_manual_mode = false;
-            if let Err(e) = protocol::send_command_start(command_queue, address) {
+        if ui.button("Calibrate IMU").clicked() {
+            if let Err(e) = protocol::send_command_calibrate(command_queue) {
                 eprintln!("{}", e);
             }
         }
-        ui.label("Arm and start motors");
-    });
-    ui.add_space(3.0);
-
-    ui.horizontal(|ui| {
-        if ui.button("Start Manual").clicked() {
-            persistent_settings.is_manual_mode = true;
-            // Reset all throttles when entering manual mode
-            control.throttle = 0.0;
-            control.master_motor_throttle = 0.0;
-            control.motor_13_throttle = 0.0;
-            control.motor_24_throttle = 0.0;
-            control.motor_throttles = [0.0; 4];
-            if let Err(e) = protocol::send_command_start_manual(command_queue, address) {
-                eprintln!("{}", e);
-            }
-        }
-        ui.label("Start manual control mode");
-    });
-    ui.add_space(3.0);
-
-    ui.horizontal(|ui| {
-        if ui.button("Stop").clicked()
-            && let Err(e) = protocol::send_command_stop(command_queue, address)
-        {
-            eprintln!("{}", e);
-        }
-        ui.label("Disarm and stop motors normally");
-    });
-    ui.add_space(3.0);
-
-    ui.horizontal(|ui| {
-        if ui.button("Emergency Stop").clicked()
-            && let Err(e) = protocol::send_command_emergency_stop(command_queue, address)
-        {
-            eprintln!("{}", e);
-        }
-        ui.label("Immediate emergency shutdown");
-    });
-    ui.add_space(3.0);
-
-    ui.horizontal(|ui| {
-        if ui.button("Calibrate").clicked()
-            && let Err(e) = protocol::send_command_calibrate(command_queue, address)
-        {
-            eprintln!("{}", e);
-        }
-        ui.label("Calibrate IMU sensors");
-    });
-    ui.add_space(3.0);
-
-    ui.horizontal(|ui| {
-        if ui.button("Reset").clicked()
-            && let Err(e) = protocol::send_command_reset(command_queue, address)
-        {
-            eprintln!("{}", e);
-        }
-        ui.label("Reset flight controller state");
+        ui.label("Calibrate gyro/accel bias");
     });
 }
 
-/// Renders the throttle controls (base throttle and motor throttles)
-fn render_throttle_controls(
+/// Renders motor bias controls
+fn render_motor_bias_controls(
     ui: &mut egui::Ui,
     control: &mut ControllerState,
-    address: u16,
     command_queue: &CommandQueue,
     persistent_settings: &mut PersistentSettings,
 ) {
-    ui.label("Base Throttle");
-    let mut throttle_clone = control.throttle;
-    ui.add(Slider::new(&mut throttle_clone, 0.0..=1.0));
-    control.throttle = throttle_clone;
+    ui.label("Motor Bias");
 
-    ui.separator();
-    ui.label("Bias");
-
-    // Master throttle
+    // Master bias
     ui.horizontal(|ui| {
         ui.label("Master");
         let mut master_clone = control.master_motor_throttle;
-        let master_changed = ui
+        if ui
             .add(
                 DragValue::new(&mut master_clone)
                     .range(0.0..=1.0)
                     .speed(0.01),
             )
-            .changed();
-        if master_changed {
+            .changed()
+        {
             control.master_motor_throttle = master_clone;
             control.motor_throttles = [master_clone; 4];
             persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_throttle(command_queue, address, control.motor_throttles);
+            send_motor_bias(command_queue, control.motor_throttles);
         }
     });
 
@@ -157,7 +82,7 @@ fn render_throttle_controls(
             control.motor_throttles[0] = motor_13_clone;
             control.motor_throttles[2] = motor_13_clone;
             persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_throttle(command_queue, address, control.motor_throttles);
+            send_motor_bias(command_queue, control.motor_throttles);
         }
     });
 
@@ -177,113 +102,21 @@ fn render_throttle_controls(
             control.motor_throttles[1] = motor_24_clone;
             control.motor_throttles[3] = motor_24_clone;
             persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_throttle(command_queue, address, control.motor_throttles);
+            send_motor_bias(command_queue, control.motor_throttles);
         }
     });
 
     // Individual motor controls
-    render_individual_motor_control(
-        ui,
-        control,
-        0,
-        "Motor 1",
-        address,
-        command_queue,
-        persistent_settings,
-    );
-    render_individual_motor_control(
-        ui,
-        control,
-        1,
-        "Motor 2",
-        address,
-        command_queue,
-        persistent_settings,
-    );
-    render_individual_motor_control(
-        ui,
-        control,
-        2,
-        "Motor 3",
-        address,
-        command_queue,
-        persistent_settings,
-    );
-    render_individual_motor_control(
-        ui,
-        control,
-        3,
-        "Motor 4",
-        address,
-        command_queue,
-        persistent_settings,
-    );
-
-    ui.separator();
-    ui.label("Set Point");
-
-    // Roll setpoint bias
-    ui.horizontal(|ui| {
-        ui.label("Roll");
-        let mut roll_bias = persistent_settings.setpoint_bias.roll;
-        if ui
-            .add(
-                DragValue::new(&mut roll_bias)
-                    .range(-180.0..=180.0)
-                    .speed(0.1)
-                    .suffix("°"),
-            )
-            .changed()
-        {
-            persistent_settings.setpoint_bias.roll = roll_bias;
-            send_setpoint(command_queue, address, &persistent_settings.setpoint_bias);
-        }
-    });
-
-    // Pitch setpoint bias
-    ui.horizontal(|ui| {
-        ui.label("Pitch");
-        let mut pitch_bias = persistent_settings.setpoint_bias.pitch;
-        if ui
-            .add(
-                DragValue::new(&mut pitch_bias)
-                    .range(-180.0..=180.0)
-                    .speed(0.1)
-                    .suffix("°"),
-            )
-            .changed()
-        {
-            persistent_settings.setpoint_bias.pitch = pitch_bias;
-            send_setpoint(command_queue, address, &persistent_settings.setpoint_bias);
-        }
-    });
-
-    // Yaw setpoint bias
-    ui.horizontal(|ui| {
-        ui.label("Yaw");
-        let mut yaw_bias = persistent_settings.setpoint_bias.yaw;
-        if ui
-            .add(
-                DragValue::new(&mut yaw_bias)
-                    .range(-180.0..=180.0)
-                    .speed(0.1)
-                    .suffix("°"),
-            )
-            .changed()
-        {
-            persistent_settings.setpoint_bias.yaw = yaw_bias;
-            send_setpoint(command_queue, address, &persistent_settings.setpoint_bias);
-        }
-    });
+    for (i, label) in ["Motor 1", "Motor 2", "Motor 3", "Motor 4"].iter().enumerate() {
+        render_individual_motor_control(ui, control, i, label, command_queue, persistent_settings);
+    }
 }
 
-/// Renders a single motor control value box
 fn render_individual_motor_control(
     ui: &mut egui::Ui,
     control: &mut ControllerState,
     motor_index: usize,
     label: &str,
-    address: u16,
     command_queue: &CommandQueue,
     persistent_settings: &mut PersistentSettings,
 ) {
@@ -300,33 +133,13 @@ fn render_individual_motor_control(
         {
             control.motor_throttles[motor_index] = motor_clone;
             persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_throttle(command_queue, address, control.motor_throttles);
+            send_motor_bias(command_queue, control.motor_throttles);
         }
     });
 }
 
-/// Helper function to send motor throttle command
-fn send_motor_throttle(command_queue: &CommandQueue, address: u16, throttles: [f32; 4]) {
-    if let Err(e) = protocol::send_command_set_motor_throttle(command_queue, address, throttles) {
-        eprintln!("Failed to send motor throttle: {}", e);
-    }
-}
-
-/// Helper function to send setpoint command
-fn send_setpoint(
-    command_queue: &CommandQueue,
-    address: u16,
-    setpoint_bias: &crate::persistence::SetpointBias,
-) {
-    if let Err(e) = protocol::send_command_set_point(
-        command_queue,
-        address,
-        protocol::Attitude {
-            roll: setpoint_bias.roll,
-            pitch: setpoint_bias.pitch,
-            yaw: setpoint_bias.yaw,
-        },
-    ) {
-        eprintln!("Failed to send setpoint: {}", e);
+fn send_motor_bias(command_queue: &CommandQueue, biases: [f32; 4]) {
+    if let Err(e) = protocol::send_command_set_motor_bias(command_queue, biases) {
+        eprintln!("Failed to send motor bias: {}", e);
     }
 }

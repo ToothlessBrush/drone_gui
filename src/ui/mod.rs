@@ -37,7 +37,7 @@ pub fn ui_system(
     ctx.request_repaint();
 
     // Top Panel - Connection controls
-    render_top_panel(ctx, &mut state, &command_queue, &persistent_settings);
+    render_top_panel(ctx, &mut state);
 
     // Central Panel - Main content
     render_central_panel(
@@ -93,12 +93,7 @@ fn update_drone_orientation(
 }
 
 /// Renders the top connection panel
-fn render_top_panel(
-    ctx: &egui::Context,
-    state: &mut AppState,
-    command_queue: &CommandQueue,
-    persistent_settings: &PersistentSettings,
-) {
+fn render_top_panel(ctx: &egui::Context, state: &mut AppState) {
     egui::TopBottomPanel::top("top_panel")
         .frame(egui::Frame {
             inner_margin: egui::Margin::same(8.0),
@@ -106,7 +101,7 @@ fn render_top_panel(
             ..Default::default()
         })
         .show(ctx, |ui| {
-            panels::render_connection_panel(ui, state, command_queue, persistent_settings);
+            panels::render_connection_panel(ui, state);
         });
 }
 

@@ -35,11 +35,10 @@ fn main() {
             Update,
             ui::ui_system.after(drone_scene::update_drone_orientation),
         )
-        .add_systems(Update, app::heartbeat_system)
-        .add_systems(Update, input::controller_input_system)
+        .add_systems(Update, app::command_dispatch_system)
         .add_systems(Update, persistence::auto_save_system)
         .insert_resource(app::AppState::default())
-        .insert_resource(app::HeartbeatTimer::default())
+        .insert_resource(app::CommandTimer::default())
         .insert_resource(app::CommandQueue::default())
         .insert_resource({
             let settings = persistence::PersistentSettings::load();

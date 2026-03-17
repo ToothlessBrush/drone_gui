@@ -1,36 +1,28 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::app::CommandQueue;
-pub trait ToHex: Pod {
-    fn to_hex(&self) -> String {
-        bytemuck::bytes_of(self)
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect()
+
+// Binary protocol type bytes - matches bluetooth.h BT_CMD_* constants
+const BT_CMD_CALIBRATE: u8 = 0x01;
+const BT_CMD_SET_PID: u8 = 0x02;
+const BT_CMD_SET_MOTOR_BIAS: u8 = 0x03;
+const BT_CMD_CONFIG: u8 = 0x04;
+const BT_CMD_SAVE: u8 = 0x05;
+
+/// CRC8-DVB-S2 - matches firmware implementation
+fn crc8_dvb_s2(data: &[u8]) -> u8 {
+    let mut crc: u8 = 0;
+    for &byte in data {
+        crc ^= byte;
+        for _ in 0..8 {
+            crc = if crc & 0x80 != 0 {
+                (crc << 1) ^ 0xD5
+            } else {
+                crc << 1
+            };
+        }
     }
-}
-
-impl<T: Pod> ToHex for T {}
-
-#[repr(C, packed)]
-#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
-pub struct ThrottlePacket(pub f32);
-
-#[repr(C, packed)]
-#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
-pub struct SetpointPacket {
-    pub roll: f32,
-    pub pitch: f32,
-    pub yaw: f32,
-}
-
-#[repr(C, packed)]
-#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
-pub struct HeartBeatPacket {
-    pub base_throttle: f32,
-    pub roll: f32,
-    pub pitch: f32,
-    pub yaw: f32,
+    crc
 }
 
 #[repr(C, packed)]
@@ -46,7 +38,7 @@ pub struct PIDTunePacket {
 
 #[repr(C, packed)]
 #[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
-pub struct MotorThrottlePacket {
+pub struct MotorBiasPacket {
     pub motor1: f32,
     pub motor2: f32,
     pub motor3: f32,
@@ -117,156 +109,81 @@ pub enum SelectPID {
     VelocityY = 0x4,
 }
 
-#[allow(unused)]
-pub struct Attitude {
-    pub roll: f32,
-    pub pitch: f32,
-    pub yaw: f32,
-}
-
-// Command protocol - matches FlightController/src/protocol.h
+/// Commands supported over Bluetooth serial - matches BT_CMD_* in bluetooth.h
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CommandType {
-    Start,
-    Stop,
-    EmergencyStop,
-    StartManual,
-    #[allow(unused)]
-    SetThrottle(ThrottlePacket),
-    #[allow(unused)]
-    SetPoint(SetpointPacket),
-    TunePID(PIDTunePacket),
-    HeartBeat(HeartBeatPacket),
-    SetMotorThrottle(MotorThrottlePacket),
-    Config(ConfigPacket),
     Calibrate,
-    Reset,
+    TunePID(PIDTunePacket),
+    SetMotorBias(MotorBiasPacket),
+    Config(ConfigPacket),
+    Save,
 }
 
 impl CommandType {
-    pub fn get_ascii(&self) -> String {
-        match self {
-            // base commands
-            CommandType::Start => "FC:START".to_string(),
-            CommandType::Stop => "FC:STOP".to_string(),
-            CommandType::EmergencyStop => "ES".to_string(),
-            CommandType::StartManual => "FC:MANUAL".to_string(),
-            CommandType::Calibrate => "FC:CALIBRATE".to_string(),
-            CommandType::Reset => "FC:RESET".to_string(),
+    /// Encode command as a binary frame: 0xA5 | TYPE | LEN | PAYLOAD | CRC8
+    pub fn to_binary_frame(&self) -> Vec<u8> {
+        let (type_byte, payload): (u8, &[u8]) = match self {
+            CommandType::Calibrate => (BT_CMD_CALIBRATE, &[]),
+            CommandType::TunePID(p) => (BT_CMD_SET_PID, bytemuck::bytes_of(p)),
+            CommandType::SetMotorBias(m) => (BT_CMD_SET_MOTOR_BIAS, bytemuck::bytes_of(m)),
+            CommandType::Config(c) => (BT_CMD_CONFIG, bytemuck::bytes_of(c)),
+            CommandType::Save => (BT_CMD_SAVE, &[]),
+        };
 
-            // encoded commands
-            CommandType::SetThrottle(throttle) => format!("ST:{}", throttle.to_hex()),
-            CommandType::SetPoint(point) => format!("SP:{}", point.to_hex()),
-            CommandType::HeartBeat(beat) => format!("HB:{}", beat.to_hex()),
-            CommandType::TunePID(tune) => format!("TP:{}", tune.to_hex()),
-            CommandType::SetMotorThrottle(mt) => format!("MB:{}", mt.to_hex()),
-            CommandType::Config(config) => format!("CF:{}", config.to_hex()),
-        }
+        let len = payload.len() as u8;
+
+        // CRC covers type + len + payload
+        let mut crc_input = vec![type_byte, len];
+        crc_input.extend_from_slice(payload);
+        let crc = crc8_dvb_s2(&crc_input);
+
+        let mut frame = vec![0xA5u8, type_byte, len];
+        frame.extend_from_slice(payload);
+        frame.push(crc);
+        frame
     }
 }
 
-pub fn send_command_start(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Start);
-    Ok(())
-}
-
-pub fn send_command_stop(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Stop);
-    Ok(())
-}
-
-pub fn send_command_emergency_stop(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::EmergencyStop);
-    Ok(())
-}
-
-pub fn send_command_start_manual(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::StartManual);
-    Ok(())
-}
-
-pub fn send_command_calibrate(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Calibrate);
-    Ok(())
-}
-
-pub fn send_command_reset(queue: &CommandQueue, address: u16) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Reset);
-    Ok(())
-}
-
-#[allow(unused)]
-pub fn send_command_set_throttle(
-    queue: &CommandQueue,
-    address: u16,
-    throttle_value: f32,
-) -> Result<(), String> {
-    queue.enqueue(
-        address,
-        CommandType::SetThrottle(ThrottlePacket(throttle_value)),
-    );
-    Ok(())
-}
-
-#[allow(unused)]
-pub fn send_command_set_point(
-    queue: &CommandQueue,
-    address: u16,
-    attitude: Attitude,
-) -> Result<(), String> {
-    queue.enqueue(
-        address,
-        CommandType::SetPoint(SetpointPacket {
-            roll: attitude.roll,
-            pitch: attitude.pitch,
-            yaw: attitude.yaw,
-        }),
-    );
+pub fn send_command_calibrate(queue: &CommandQueue) -> Result<(), String> {
+    queue.enqueue(CommandType::Calibrate);
     Ok(())
 }
 
 pub fn send_command_tune_pid(
     queue: &CommandQueue,
-    address: u16,
     axis: SelectPID,
     pid: PIDController,
 ) -> Result<(), String> {
-    queue.enqueue(
-        address,
-        CommandType::TunePID(PIDTunePacket {
-            p: pid.p,
-            i: pid.i,
-            d: pid.d,
-            i_limit: pid.i_limit,
-            pid_limit: pid.pid_limit,
-            axis: axis as u8,
-        }),
-    );
+    queue.enqueue(CommandType::TunePID(PIDTunePacket {
+        p: pid.p,
+        i: pid.i,
+        d: pid.d,
+        i_limit: pid.i_limit,
+        pid_limit: pid.pid_limit,
+        axis: axis as u8,
+    }));
     Ok(())
 }
 
-pub fn send_command_set_motor_throttle(
+pub fn send_command_set_motor_bias(
     queue: &CommandQueue,
-    address: u16,
-    motor_throttles: [f32; 4],
+    motor_biases: [f32; 4],
 ) -> Result<(), String> {
-    queue.enqueue(
-        address,
-        CommandType::SetMotorThrottle(MotorThrottlePacket {
-            motor1: motor_throttles[0],
-            motor2: motor_throttles[1],
-            motor3: motor_throttles[2],
-            motor4: motor_throttles[3],
-        }),
-    );
+    queue.enqueue(CommandType::SetMotorBias(MotorBiasPacket {
+        motor1: motor_biases[0],
+        motor2: motor_biases[1],
+        motor3: motor_biases[2],
+        motor4: motor_biases[3],
+    }));
     Ok(())
 }
 
-pub fn send_command_config(
-    queue: &CommandQueue,
-    address: u16,
-    config: ConfigPacket,
-) -> Result<(), String> {
-    queue.enqueue(address, CommandType::Config(config));
+pub fn send_command_config(queue: &CommandQueue, config: ConfigPacket) -> Result<(), String> {
+    queue.enqueue(CommandType::Config(config));
+    Ok(())
+}
+
+pub fn send_command_save(queue: &CommandQueue) -> Result<(), String> {
+    queue.enqueue(CommandType::Save);
     Ok(())
 }

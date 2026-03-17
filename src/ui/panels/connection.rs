@@ -1,13 +1,10 @@
 use bevy_egui::egui;
-use crate::app::{AppState, CommandQueue};
-use crate::persistence::PersistentSettings;
+use crate::app::AppState;
 
-/// Renders the top connection panel with serial, video, and send controls
+/// Renders the top connection panel with serial and video controls
 pub fn render_connection_panel(
     ui: &mut egui::Ui,
     state: &mut AppState,
-    command_queue: &CommandQueue,
-    persistent_settings: &PersistentSettings,
 ) {
     ui.horizontal_wrapped(|ui| {
         ui.heading("Drone Telemetry Monitor");
@@ -22,7 +19,6 @@ pub fn render_connection_panel(
                 for port in &available {
                     ui.selectable_value(&mut state.port_path, port.clone(), port);
                 }
-                // Allow manual entry if not in list
                 ui.separator();
                 ui.label("Or enter manually:");
                 ui.text_edit_singleline(&mut state.port_path);
@@ -33,13 +29,10 @@ pub fn render_connection_panel(
                 state.disconnect_uart();
             }
         } else if ui.button("Connect").clicked() {
-            match state.start_uart_thread(command_queue, persistent_settings) {
-                Ok(()) => {
-                    // Success notification already in uart module
-                }
+            match state.start_uart_thread() {
+                Ok(()) => {}
                 Err(e) => {
                     eprintln!("Serial connection failed: {}", e);
-                    // Add error to data buffer so user sees it in logs
                     if let Ok(mut buffer) = state.data_buffer.lock() {
                         buffer.push_log(format!("Serial Error: {}", e));
                     }
@@ -62,17 +55,6 @@ pub fn render_connection_panel(
             && !state.video_connected
         {
             state.start_video_thread();
-        }
-
-        ui.separator();
-
-        // Send data
-        ui.label("Address:");
-        ui.add(egui::TextEdit::singleline(&mut state.send_address).desired_width(40.0));
-        ui.label("Data:");
-        ui.text_edit_singleline(&mut state.send_data);
-        if ui.button("Send").clicked() {
-            state.send_data();
         }
 
         ui.separator();

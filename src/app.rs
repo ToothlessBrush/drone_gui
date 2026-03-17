@@ -9,79 +9,46 @@ use crate::uart::{self, UartCommand};
 use crate::video::{self, SharedVideoFrame};
 
 #[derive(Resource)]
-pub struct HeartbeatTimer {
+pub struct CommandTimer {
     pub timer: Timer,
 }
 
-impl Default for HeartbeatTimer {
+impl Default for CommandTimer {
     fn default() -> Self {
         Self {
-            timer: Timer::from_seconds(0.5, TimerMode::Repeating),
+            timer: Timer::from_seconds(0.2, TimerMode::Repeating),
         }
     }
 }
 
 #[derive(Resource, Default)]
 pub struct CommandQueue {
-    pub queue: Arc<Mutex<VecDeque<(u16, protocol::CommandType)>>>,
-    pub estop_active: Arc<Mutex<bool>>,
+    pub queue: Arc<Mutex<VecDeque<protocol::CommandType>>>,
 }
 
 impl CommandQueue {
-    pub fn enqueue(&self, address: u16, command: protocol::CommandType) {
+    pub fn enqueue(&self, command: protocol::CommandType) {
         if let Ok(mut queue) = self.queue.lock() {
-            // Check if this is an emergency stop command
-            if matches!(command, protocol::CommandType::EmergencyStop) {
-                // Clear the entire queue on estop
-                queue.clear();
-                // Set estop active flag
-                if let Ok(mut estop_flag) = self.estop_active.lock() {
-                    *estop_flag = true;
-                }
-                // Add estop command
-                queue.push_back((address, command));
-                return;
-            }
-
-            // Check if this is a reset command
-            if matches!(command, protocol::CommandType::Reset) {
-                // Clear estop active flag
-                if let Ok(mut estop_flag) = self.estop_active.lock() {
-                    *estop_flag = false;
-                }
-            }
-
             // Remove any existing command of the same type
             let cmd_discriminant = std::mem::discriminant(&command);
-            queue.retain(|(_, existing_cmd)| {
+            queue.retain(|existing_cmd| {
                 std::mem::discriminant(existing_cmd) != cmd_discriminant
             });
-
-            // Add the new command
-            queue.push_back((address, command));
+            queue.push_back(command);
         }
     }
 
-    pub fn dequeue(&self) -> Option<(u16, String)> {
+    pub fn dequeue(&self) -> Option<Vec<u8>> {
         if let Ok(mut queue) = self.queue.lock() {
-            queue.pop_front().map(|(addr, cmd)| (addr, cmd.get_ascii()))
+            queue.pop_front().map(|cmd| cmd.to_binary_frame())
         } else {
             None
         }
-    }
-
-    pub fn is_estop_active(&self) -> bool {
-        self.estop_active.lock().map(|flag| *flag).unwrap_or(false)
     }
 }
 
 #[derive(Resource, Clone)]
 pub struct ControllerState {
-    pub roll: f32,
-    pub pitch: f32,
-    pub yaw: f32,
-    pub throttle: f32,
-    pub base_throttle: f32,
     pub master_motor_throttle: f32,
     pub motor_13_throttle: f32,
     pub motor_24_throttle: f32,
@@ -91,11 +58,6 @@ pub struct ControllerState {
 impl Default for ControllerState {
     fn default() -> Self {
         Self {
-            roll: 0.0,
-            pitch: 0.0,
-            yaw: 0.0,
-            throttle: 0.0,
-            base_throttle: 0.0,
             master_motor_throttle: 0.0,
             motor_13_throttle: 0.0,
             motor_24_throttle: 0.0,
@@ -105,16 +67,10 @@ impl Default for ControllerState {
 }
 
 impl ControllerState {
-    /// Create ControllerState from saved persistent settings
     pub fn from_persistent(settings: &crate::persistence::PersistentSettings) -> Self {
         let throttles = settings.motor_throttles;
         Self {
-            roll: 0.0,
-            pitch: 0.0,
-            yaw: 0.0,
-            throttle: 0.0,
-            base_throttle: 0.0,
-            master_motor_throttle: throttles[0], // Use motor 1 as master default
+            master_motor_throttle: throttles[0],
             motor_13_throttle: throttles[0],
             motor_24_throttle: throttles[1],
             motor_throttles: throttles,
@@ -130,8 +86,6 @@ pub struct AppState {
     pub selected_pid_axis: PidAxis,
     pub auto_scroll_logs: bool,
     pub uart_sender: Option<mpsc::Sender<UartCommand>>,
-    pub send_address: String,
-    pub send_data: String,
     pub video_frame: SharedVideoFrame,
     pub video_texture: Option<egui::TextureHandle>,
     pub video_connected: bool,
@@ -151,7 +105,7 @@ impl Default for AppState {
             if cfg!(windows) {
                 "COM3".to_string()
             } else {
-                "/dev/ttyAMA1".to_string()
+                "/dev/ttyUSB0".to_string()
             }
         });
 
@@ -163,8 +117,6 @@ impl Default for AppState {
             selected_pid_axis: PidAxis::Roll,
             auto_scroll_logs: true,
             uart_sender: None,
-            send_address: "0".to_string(),
-            send_data: String::new(),
             video_frame: Arc::new(Mutex::new(None)),
             video_texture: None,
             video_connected: false,
@@ -176,11 +128,7 @@ impl Default for AppState {
 }
 
 impl AppState {
-    pub fn start_uart_thread(
-        &mut self,
-        command_queue: &crate::app::CommandQueue,
-        persistent_settings: &crate::persistence::PersistentSettings,
-    ) -> Result<(), String> {
+    pub fn start_uart_thread(&mut self) -> Result<(), String> {
         if self.serial_connected {
             return Ok(());
         }
@@ -192,17 +140,6 @@ impl AppState {
             Ok(sender) => {
                 self.uart_sender = Some(sender);
                 self.serial_connected = true;
-
-                // Queue config command on startup
-                if let Ok(address) = self.send_address.parse::<u16>() {
-                    let config_packet = persistent_settings.to_config_packet();
-                    if let Err(e) =
-                        protocol::send_command_config(command_queue, address, config_packet)
-                    {
-                        eprintln!("Failed to queue config command on startup: {}", e);
-                    }
-                }
-
                 Ok(())
             }
             Err(e) => {
@@ -219,22 +156,6 @@ impl AppState {
         }
         self.uart_sender = None;
         self.serial_connected = false;
-    }
-
-    pub fn send_data(&self) {
-        if let Some(sender) = &self.uart_sender {
-            if let Ok(address) = self.send_address.parse::<u16>() {
-                let cmd = UartCommand::Send {
-                    address,
-                    data: self.send_data.clone(),
-                };
-                if let Err(e) = sender.send(cmd) {
-                    eprintln!("Failed to send command: {}", e);
-                }
-            } else {
-                eprintln!("Invalid address: {}", self.send_address);
-            }
-        }
     }
 
     pub fn start_video_thread(&mut self) {
@@ -255,76 +176,25 @@ impl AppState {
     }
 }
 
-/// Heartbeat system that sends queued commands or heartbeat every 300ms when UART is connected
-pub fn heartbeat_system(
+/// Dispatches queued commands to the UART thread and responds to config requests
+pub fn command_dispatch_system(
     time: Res<Time>,
-    mut heartbeat_timer: ResMut<HeartbeatTimer>,
+    mut timer: ResMut<CommandTimer>,
     state: Res<AppState>,
-    controller_state: Res<ControllerState>,
     command_queue: Res<CommandQueue>,
-    persistent_settings: Res<crate::persistence::PersistentSettings>,
 ) {
-    // Only send if UART is connected
     if !state.serial_connected {
         return;
     }
 
-    // Check if config was requested
-    if let Ok(mut buffer) = state.data_buffer.lock()
-        && buffer.config_requested
-    {
-        buffer.config_requested = false;
-        if let Ok(address) = state.send_address.parse::<u16>() {
-            let config_packet = persistent_settings.to_config_packet();
-            if let Err(e) = protocol::send_command_config(&command_queue, address, config_packet) {
-                eprintln!("Failed to queue config command: {}", e);
-            } else {
-                buffer.push_log("Queued config response".to_string());
-            }
-        }
-    }
+    timer.timer.tick(time.delta());
 
-    heartbeat_timer.timer.tick(time.delta());
-
-    if heartbeat_timer.timer.just_finished()
+    if timer.timer.just_finished()
         && let Some(sender) = &state.uart_sender
-        && let Ok(address) = state.send_address.parse::<u16>()
     {
-        // If estop is active, always send estop command instead of heartbeat
-        if command_queue.is_estop_active() {
-            let estop_data = protocol::CommandType::EmergencyStop.get_ascii();
-            if let Err(e) = sender.send(UartCommand::Send {
-                address,
-                data: estop_data,
-            }) {
-                eprintln!("Failed to send estop: {}", e);
-            }
-        } else {
-            // Check if there's a command in the queue
-            if let Some((cmd_address, cmd_data)) = command_queue.dequeue() {
-                // Send the queued command
-                if let Err(e) = sender.send(UartCommand::Send {
-                    address: cmd_address,
-                    data: cmd_data,
-                }) {
-                    eprintln!("Failed to send queued command: {}", e);
-                }
-            } else {
-                // No queued command, send heartbeat
-                let heartbeat_data = protocol::CommandType::HeartBeat(protocol::HeartBeatPacket {
-                    base_throttle: controller_state.throttle,
-                    roll: controller_state.roll,
-                    pitch: controller_state.pitch,
-                    yaw: controller_state.yaw,
-                })
-                .get_ascii();
-
-                if let Err(e) = sender.send(UartCommand::Send {
-                    address,
-                    data: heartbeat_data,
-                }) {
-                    eprintln!("Failed to send heartbeat: {}", e);
-                }
+        if let Some(frame) = command_queue.dequeue() {
+            if let Err(e) = sender.send(UartCommand::Send { data: frame }) {
+                eprintln!("Failed to send command: {}", e);
             }
         }
     }
