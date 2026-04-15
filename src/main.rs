@@ -8,7 +8,7 @@ mod protocol;
 mod telemetry;
 mod uart;
 mod ui;
-mod video;
+
 
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;

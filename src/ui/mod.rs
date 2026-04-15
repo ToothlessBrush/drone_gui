@@ -27,9 +27,6 @@ pub fn ui_system(
         );
     }
 
-    // Update video texture if new frame is available
-    update_video_texture(&mut contexts, &mut state);
-
     // Update drone orientation from telemetry
     update_drone_orientation(&state, &mut drone_query);
 
@@ -50,30 +47,6 @@ pub fn ui_system(
 
     // PID Tuning Window
     windows::render_pid_tuning_window(ctx, &mut state, &command_queue, &mut persistent_settings);
-}
-
-/// Updates the video texture if a new frame is available
-fn update_video_texture(contexts: &mut EguiContexts, state: &mut AppState) {
-    let frame_data_opt = state
-        .video_frame
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone());
-
-    if let Some(frame_data) = frame_data_opt {
-        let ctx = contexts.ctx_mut();
-        let texture = state.video_texture.get_or_insert_with(|| {
-            ctx.load_texture(
-                "video_frame",
-                egui::ColorImage::from_rgb([frame_data.width, frame_data.height], &frame_data.data),
-                egui::TextureOptions::default(),
-            )
-        });
-        texture.set(
-            egui::ColorImage::from_rgb([frame_data.width, frame_data.height], &frame_data.data),
-            egui::TextureOptions::default(),
-        );
-    }
 }
 
 /// Updates the drone orientation in the 3D scene from telemetry data

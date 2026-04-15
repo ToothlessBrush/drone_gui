@@ -1,7 +1,7 @@
 use bevy_egui::egui;
 use crate::app::AppState;
 
-/// Renders the top connection panel with serial and video controls
+/// Renders the top connection panel with serial controls
 pub fn render_connection_panel(
     ui: &mut egui::Ui,
     state: &mut AppState,
@@ -44,23 +44,6 @@ pub fn render_connection_panel(
                     }
                 }
             }
-        }
-
-        ui.separator();
-
-        // Video connection
-        ui.label("Video Device:");
-        ui.text_edit_singleline(&mut state.video_device_path);
-        if ui
-            .button(if state.video_connected {
-                "Connected"
-            } else {
-                "Connect"
-            })
-            .clicked()
-            && !state.video_connected
-        {
-            state.start_video_thread();
         }
 
         ui.separator();

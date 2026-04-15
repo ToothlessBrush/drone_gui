@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex, mpsc};
 use crate::protocol;
 use crate::telemetry::{DataBuffer, PidAxis};
 use crate::uart::{self, UartCommand};
-use crate::video::{self, SharedVideoFrame};
 
 #[derive(Resource)]
 pub struct CommandTimer {
@@ -87,10 +86,6 @@ pub struct AppState {
     pub selected_pid_axis: PidAxis,
     pub auto_scroll_logs: bool,
     pub uart_sender: Option<mpsc::Sender<UartCommand>>,
-    pub video_frame: SharedVideoFrame,
-    pub video_texture: Option<egui::TextureHandle>,
-    pub video_connected: bool,
-    pub video_device_path: String,
     pub viewport_texture_id: Option<egui::TextureId>,
     pub available_ports: Vec<String>,
     pub show_pid_tuning: bool,
@@ -118,10 +113,6 @@ impl Default for AppState {
             selected_pid_axis: PidAxis::Roll,
             auto_scroll_logs: true,
             uart_sender: None,
-            video_frame: Arc::new(Mutex::new(None)),
-            video_texture: None,
-            video_connected: false,
-            video_device_path: "/dev/video2".to_string(),
             viewport_texture_id: None,
             show_pid_tuning: false,
         }
@@ -165,22 +156,6 @@ impl AppState {
         self.serial_connected = false;
     }
 
-    pub fn start_video_thread(&mut self) {
-        if self.video_connected {
-            return;
-        }
-        let device_path = self.video_device_path.clone();
-        match video::start_video_thread(&device_path) {
-            Ok(frame_buffer) => {
-                self.video_frame = frame_buffer;
-                self.video_connected = true;
-                println!("Video capture started from {}", device_path);
-            }
-            Err(e) => {
-                eprintln!("Failed to start video capture: {}", e);
-            }
-        }
-    }
 }
 
 /// Sends Disconnect to the UART thread on app exit so the serial port is released cleanly.
