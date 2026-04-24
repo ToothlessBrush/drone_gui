@@ -89,7 +89,7 @@ fn render_pid_parameters(ui: &mut egui::Ui, persistent_settings: &mut Persistent
         ui.add(
             egui::DragValue::new(&mut pid_params.i)
                 .speed(0.001)
-                .range(-2.0..=2.0),
+                .range(-20.0..=20.0),
         );
     });
 

@@ -1,7 +1,7 @@
 pub mod panels;
 pub mod windows;
 
-use crate::app::{AppState, CommandQueue, ControllerState};
+use crate::app::{AppState, CommandQueue};
 use crate::drone_scene::{Drone, DroneOrientation, ViewportImage};
 use crate::persistence::PersistentSettings;
 use bevy::prelude::*;
@@ -11,7 +11,6 @@ use bevy_egui::{EguiContexts, egui};
 pub fn ui_system(
     mut contexts: EguiContexts,
     mut state: ResMut<AppState>,
-    mut control: ResMut<ControllerState>,
     mut drone_query: Query<&mut DroneOrientation, With<Drone>>,
     viewport_image: Res<ViewportImage>,
     command_queue: Res<CommandQueue>,
@@ -40,7 +39,6 @@ pub fn ui_system(
     render_central_panel(
         ctx,
         &mut state,
-        &mut control,
         &command_queue,
         &mut persistent_settings,
     );
@@ -82,7 +80,6 @@ fn render_top_panel(ctx: &egui::Context, state: &mut AppState) {
 fn render_central_panel(
     ctx: &egui::Context,
     state: &mut AppState,
-    control: &mut ControllerState,
     command_queue: &CommandQueue,
     persistent_settings: &mut PersistentSettings,
 ) {
@@ -97,7 +94,7 @@ fn render_central_panel(
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     // Horizontal layout: View | Commands | Log
-                    render_main_sections(ui, state, control, command_queue, persistent_settings);
+                    render_main_sections(ui, state, command_queue, persistent_settings);
 
                     // Clear plots button
                     if ui.button("clear plots").clicked() {
@@ -107,6 +104,9 @@ fn render_central_panel(
                     // Attitude and PID plots
                     panels::render_attitude_plot(ui, state);
                     panels::render_pid_plot(ui, state);
+                    panels::render_gyro_plot(ui, state);
+                    panels::render_velocity_plot(ui, state);
+                    panels::render_motor_plot(ui, state);
                 });
         });
 }
@@ -115,7 +115,6 @@ fn render_central_panel(
 fn render_main_sections(
     ui: &mut egui::Ui,
     state: &mut AppState,
-    control: &mut ControllerState,
     command_queue: &CommandQueue,
     persistent_settings: &mut PersistentSettings,
 ) {
@@ -135,7 +134,6 @@ fn render_main_sections(
             panels::render_commands_section(
                 ui,
                 state,
-                control,
                 command_queue,
                 persistent_settings,
                 middle_width,

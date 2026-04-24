@@ -48,37 +48,6 @@ impl CommandQueue {
 }
 
 #[derive(Resource, Clone)]
-pub struct ControllerState {
-    pub master_motor_throttle: f32,
-    pub motor_13_throttle: f32,
-    pub motor_24_throttle: f32,
-    pub motor_throttles: [f32; 4],
-}
-
-impl Default for ControllerState {
-    fn default() -> Self {
-        Self {
-            master_motor_throttle: 0.0,
-            motor_13_throttle: 0.0,
-            motor_24_throttle: 0.0,
-            motor_throttles: [0.0; 4],
-        }
-    }
-}
-
-impl ControllerState {
-    pub fn from_persistent(settings: &crate::persistence::PersistentSettings) -> Self {
-        let throttles = settings.motor_throttles;
-        Self {
-            master_motor_throttle: throttles[0],
-            motor_13_throttle: throttles[0],
-            motor_24_throttle: throttles[1],
-            motor_throttles: throttles,
-        }
-    }
-}
-
-#[derive(Resource, Clone)]
 pub struct AppState {
     pub data_buffer: Arc<Mutex<DataBuffer>>,
     pub serial_connected: bool,

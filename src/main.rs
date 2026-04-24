@@ -41,10 +41,6 @@ fn main() {
         .insert_resource(app::AppState::default())
         .insert_resource(app::CommandTimer::default())
         .insert_resource(app::CommandQueue::default())
-        .insert_resource({
-            let settings = persistence::PersistentSettings::load();
-            app::ControllerState::from_persistent(&settings)
-        })
         .insert_resource(persistence::PersistentSettings::load())
         .run();
 }

@@ -1,4 +1,4 @@
-use crate::app::{AppState, CommandQueue, ControllerState};
+use crate::app::{AppState, CommandQueue};
 use crate::persistence::PersistentSettings;
 use crate::protocol;
 use bevy_egui::egui::{self, DragValue};
@@ -7,7 +7,6 @@ use bevy_egui::egui::{self, DragValue};
 pub fn render_commands_section(
     ui: &mut egui::Ui,
     state: &AppState,
-    control: &mut ControllerState,
     command_queue: &CommandQueue,
     persistent_settings: &mut PersistentSettings,
     width: f32,
@@ -19,7 +18,7 @@ pub fn render_commands_section(
         if state.uart_sender.is_some() {
             render_command_buttons(ui, command_queue);
             ui.separator();
-            render_motor_bias_controls(ui, control, command_queue, persistent_settings);
+            render_flight_config_controls(ui, state, command_queue, persistent_settings);
         } else {
             ui.label("Connect to serial port to enable commands");
         }
@@ -38,108 +37,84 @@ fn render_command_buttons(ui: &mut egui::Ui, command_queue: &CommandQueue) {
     });
 }
 
-/// Renders motor bias controls
-fn render_motor_bias_controls(
+fn render_flight_config_controls(
     ui: &mut egui::Ui,
-    control: &mut ControllerState,
+    state: &AppState,
     command_queue: &CommandQueue,
     persistent_settings: &mut PersistentSettings,
 ) {
-    ui.label("Motor Bias");
+    ui.label("Flight Config");
 
-    // Master bias
     ui.horizontal(|ui| {
-        ui.label("Master");
-        let mut master_clone = control.master_motor_throttle;
+        ui.label("Hover Throttle");
+        ui.add(
+            DragValue::new(&mut persistent_settings.throttle_hover)
+                .range(0.05..=0.95)
+                .speed(0.01),
+        );
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Throttle Expo");
+        ui.add(
+            DragValue::new(&mut persistent_settings.throttle_expo)
+                .range(0.0..=1.0)
+                .speed(0.01),
+        );
+    });
+
+    let max_angle_deg = |rad: f32| rad.to_degrees();
+    let deg_to_rad = |deg: f32| deg.to_radians();
+
+    ui.horizontal(|ui| {
+        ui.label("Max Roll");
+        let mut deg = max_angle_deg(persistent_settings.max_roll_angle);
         if ui
-            .add(
-                DragValue::new(&mut master_clone)
-                    .range(0.0..=1.0)
-                    .speed(0.01),
-            )
+            .add(DragValue::new(&mut deg).range(5.0..=60.0).speed(0.5).suffix("°"))
             .changed()
         {
-            control.master_motor_throttle = master_clone;
-            control.motor_throttles = [master_clone; 4];
-            persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_bias(command_queue, control.motor_throttles);
+            persistent_settings.max_roll_angle = deg_to_rad(deg);
         }
     });
 
-    // Motors 1 & 3
     ui.horizontal(|ui| {
-        ui.label("Motors 1 & 3");
-        let mut motor_13_clone = control.motor_13_throttle;
+        ui.label("Max Pitch");
+        let mut deg = max_angle_deg(persistent_settings.max_pitch_angle);
         if ui
-            .add(
-                DragValue::new(&mut motor_13_clone)
-                    .range(0.0..=1.0)
-                    .speed(0.01),
-            )
+            .add(DragValue::new(&mut deg).range(5.0..=60.0).speed(0.5).suffix("°"))
             .changed()
         {
-            control.motor_13_throttle = motor_13_clone;
-            control.motor_throttles[0] = motor_13_clone;
-            control.motor_throttles[2] = motor_13_clone;
-            persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_bias(command_queue, control.motor_throttles);
+            persistent_settings.max_pitch_angle = deg_to_rad(deg);
         }
     });
 
-    // Motors 2 & 4
     ui.horizontal(|ui| {
-        ui.label("Motors 2 & 4");
-        let mut motor_24_clone = control.motor_24_throttle;
+        ui.label("Max Yaw Rate");
+        let mut deg_s = max_angle_deg(persistent_settings.max_yaw_rate);
         if ui
-            .add(
-                DragValue::new(&mut motor_24_clone)
-                    .range(0.0..=1.0)
-                    .speed(0.01),
-            )
+            .add(DragValue::new(&mut deg_s).range(10.0..=360.0).speed(1.0).suffix("°/s"))
             .changed()
         {
-            control.motor_24_throttle = motor_24_clone;
-            control.motor_throttles[1] = motor_24_clone;
-            control.motor_throttles[3] = motor_24_clone;
-            persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_bias(command_queue, control.motor_throttles);
+            persistent_settings.max_yaw_rate = deg_to_rad(deg_s);
         }
     });
 
-    // Individual motor controls
-    for (i, label) in ["Motor 1", "Motor 2", "Motor 3", "Motor 4"].iter().enumerate() {
-        render_individual_motor_control(ui, control, i, label, command_queue, persistent_settings);
-    }
-}
-
-fn render_individual_motor_control(
-    ui: &mut egui::Ui,
-    control: &mut ControllerState,
-    motor_index: usize,
-    label: &str,
-    command_queue: &CommandQueue,
-    persistent_settings: &mut PersistentSettings,
-) {
     ui.horizontal(|ui| {
-        ui.label(label);
-        let mut motor_clone = control.motor_throttles[motor_index];
-        if ui
-            .add(
-                DragValue::new(&mut motor_clone)
-                    .range(0.0..=1.0)
-                    .speed(0.01),
-            )
-            .changed()
-        {
-            control.motor_throttles[motor_index] = motor_clone;
-            persistent_settings.motor_throttles = control.motor_throttles;
-            send_motor_bias(command_queue, control.motor_throttles);
+        if ui.button("Send Config").clicked() {
+            let config = persistent_settings.to_config_packet();
+            if let Err(e) = protocol::send_command_config(command_queue, config) {
+                eprintln!("Failed to send config: {}", e);
+            } else if let Ok(mut buffer) = state.data_buffer.lock() {
+                buffer.push_log("Flight config sent".to_string());
+            }
+        }
+
+        if ui.button("Save").clicked() {
+            if let Err(e) = protocol::send_command_save(command_queue) {
+                eprintln!("Failed to send save: {}", e);
+            } else if let Ok(mut buffer) = state.data_buffer.lock() {
+                buffer.push_log("Save to flash queued".to_string());
+            }
         }
     });
-}
-
-fn send_motor_bias(command_queue: &CommandQueue, biases: [f32; 4]) {
-    if let Err(e) = protocol::send_command_set_motor_bias(command_queue, biases) {
-        eprintln!("Failed to send motor bias: {}", e);
-    }
 }

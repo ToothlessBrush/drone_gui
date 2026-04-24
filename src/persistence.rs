@@ -40,14 +40,28 @@ pub struct PersistentSettings {
     #[serde(default)]
     pub pid_velocity_y: PidParameters,
 
-    // Motor bias values (trim per-motor)
-    #[serde(default)]
-    pub motor_throttles: [f32; 4],
+    // Flight config: throttle curve + angle sensitivity
+    #[serde(default = "default_throttle_hover")]
+    pub throttle_hover: f32,
+    #[serde(default = "default_throttle_expo")]
+    pub throttle_expo: f32,
+    #[serde(default = "default_max_roll_angle")]
+    pub max_roll_angle: f32,
+    #[serde(default = "default_max_pitch_angle")]
+    pub max_pitch_angle: f32,
+    #[serde(default = "default_max_yaw_rate")]
+    pub max_yaw_rate: f32,
 
     // Currently selected axis for tuning (not persisted, just for UI state)
     #[serde(skip)]
     pub selected_tune_axis: protocol::SelectPID,
 }
+
+fn default_throttle_hover() -> f32 { 0.45 }
+fn default_throttle_expo() -> f32 { 0.6 }
+fn default_max_roll_angle() -> f32 { 0.5 }
+fn default_max_pitch_angle() -> f32 { 0.5 }
+fn default_max_yaw_rate() -> f32 { 1.571 }
 
 impl Default for PersistentSettings {
     fn default() -> Self {
@@ -57,7 +71,11 @@ impl Default for PersistentSettings {
             pid_yaw: PidParameters::default(),
             pid_velocity_x: PidParameters::default(),
             pid_velocity_y: PidParameters::default(),
-            motor_throttles: [0.0; 4],
+            throttle_hover: default_throttle_hover(),
+            throttle_expo: default_throttle_expo(),
+            max_roll_angle: default_max_roll_angle(),
+            max_pitch_angle: default_max_pitch_angle(),
+            max_yaw_rate: default_max_yaw_rate(),
             selected_tune_axis: protocol::SelectPID::Roll,
         }
     }
@@ -126,35 +144,11 @@ impl PersistentSettings {
 
     pub fn to_config_packet(&self) -> protocol::ConfigPacket {
         protocol::ConfigPacket {
-            motor1: self.motor_throttles[0],
-            motor2: self.motor_throttles[1],
-            motor3: self.motor_throttles[2],
-            motor4: self.motor_throttles[3],
-            roll_kp: self.pid_roll.p,
-            roll_ki: self.pid_roll.i,
-            roll_kd: self.pid_roll.d,
-            roll_i_limit: self.pid_roll.i_limit,
-            roll_pid_limit: self.pid_roll.pid_limit,
-            pitch_kp: self.pid_pitch.p,
-            pitch_ki: self.pid_pitch.i,
-            pitch_kd: self.pid_pitch.d,
-            pitch_i_limit: self.pid_pitch.i_limit,
-            pitch_pid_limit: self.pid_pitch.pid_limit,
-            yaw_kp: self.pid_yaw.p,
-            yaw_ki: self.pid_yaw.i,
-            yaw_kd: self.pid_yaw.d,
-            yaw_i_limit: self.pid_yaw.i_limit,
-            yaw_pid_limit: self.pid_yaw.pid_limit,
-            velocity_x_kp: self.pid_velocity_x.p,
-            velocity_x_ki: self.pid_velocity_x.i,
-            velocity_x_kd: self.pid_velocity_x.d,
-            velocity_x_i_limit: self.pid_velocity_x.i_limit,
-            velocity_x_pid_limit: self.pid_velocity_x.pid_limit,
-            velocity_y_kp: self.pid_velocity_y.p,
-            velocity_y_ki: self.pid_velocity_y.i,
-            velocity_y_kd: self.pid_velocity_y.d,
-            velocity_y_i_limit: self.pid_velocity_y.i_limit,
-            velocity_y_pid_limit: self.pid_velocity_y.pid_limit,
+            throttle_hover: self.throttle_hover,
+            throttle_expo: self.throttle_expo,
+            max_roll_angle: self.max_roll_angle,
+            max_pitch_angle: self.max_pitch_angle,
+            max_yaw_rate: self.max_yaw_rate,
         }
     }
 }

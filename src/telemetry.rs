@@ -1,6 +1,5 @@
 use bytemuck::{Pod, Zeroable};
 use chrono::{DateTime, Local};
-use egui_plot::PlotPoints;
 use std::collections::VecDeque;
 
 use crate::config::{MAX_LOG_MESSAGES, MAX_POINTS};
@@ -32,9 +31,26 @@ pub struct TelemetryData {
     pub yaw_p: f32,
     pub yaw_i: f32,
     pub yaw_d: f32,
+    // Gyroscope angular velocity (rad/s)
+    pub gyro_x: f32,
+    pub gyro_y: f32,
+    pub gyro_z: f32,
     // Optical flow velocity
     pub vel_x: f32,
     pub vel_y: f32,
+    pub vel_z: f32,
+    // Height above ground (m)
+    pub height: f32,
+    // Motor throttle outputs (0.0-1.0)
+    pub motor1: f32,
+    pub motor2: f32,
+    pub motor3: f32,
+    pub motor4: f32,
+    // Commanded setpoints from pilot sticks
+    pub input_throttle: f32,
+    pub input_roll: f32,
+    pub input_pitch: f32,
+    pub input_yaw: f32,
 }
 
 #[repr(C, packed)]
@@ -58,8 +74,25 @@ pub struct TelemetryPacket {
     yaw_i_term: f32,
     yaw_d_term: f32,
 
+    gyro_x: f32,
+    gyro_y: f32,
+    gyro_z: f32,
+
     vel_x: f32,
     vel_y: f32,
+    vel_z: f32,
+
+    height: f32,
+
+    motor1: f32,
+    motor2: f32,
+    motor3: f32,
+    motor4: f32,
+
+    input_throttle: f32,
+    input_roll: f32,
+    input_pitch: f32,
+    input_yaw: f32,
 }
 
 impl From<&TelemetryPacket> for TelemetryData {
@@ -79,8 +112,21 @@ impl From<&TelemetryPacket> for TelemetryData {
             yaw_p: packet.yaw_p_term,
             yaw_i: packet.yaw_i_term,
             yaw_d: packet.yaw_d_term,
+            gyro_x: packet.gyro_x,
+            gyro_y: packet.gyro_y,
+            gyro_z: packet.gyro_z,
             vel_x: packet.vel_x,
             vel_y: packet.vel_y,
+            vel_z: packet.vel_z,
+            height: packet.height,
+            motor1: packet.motor1,
+            motor2: packet.motor2,
+            motor3: packet.motor3,
+            motor4: packet.motor4,
+            input_throttle: packet.input_throttle,
+            input_roll: packet.input_roll,
+            input_pitch: packet.input_pitch,
+            input_yaw: packet.input_yaw,
         }
     }
 }
@@ -137,66 +183,4 @@ impl DataBuffer {
         self.logs.push_back(log_msg);
     }
 
-    pub fn get_roll_data(&self) -> PlotPoints {
-        self.data
-            .iter()
-            .map(|d| [d.timestamp as f64 / 1000.0, d.roll as f64])
-            .collect()
-    }
-
-    pub fn get_pitch_data(&self) -> PlotPoints {
-        self.data
-            .iter()
-            .map(|d| [d.timestamp as f64 / 1000.0, d.pitch as f64])
-            .collect()
-    }
-
-    pub fn get_yaw_data(&self) -> PlotPoints {
-        self.data
-            .iter()
-            .map(|d| [d.timestamp as f64 / 1000.0, d.yaw as f64])
-            .collect()
-    }
-
-    pub fn get_pid_p_data(&self, axis: PidAxis) -> PlotPoints {
-        self.data
-            .iter()
-            .map(|d| {
-                let val = match axis {
-                    PidAxis::Roll => d.roll_p,
-                    PidAxis::Pitch => d.pitch_p,
-                    PidAxis::Yaw => d.yaw_p,
-                };
-                [d.timestamp as f64 / 1000.0, val as f64]
-            })
-            .collect()
-    }
-
-    pub fn get_pid_i_data(&self, axis: PidAxis) -> PlotPoints {
-        self.data
-            .iter()
-            .map(|d| {
-                let val = match axis {
-                    PidAxis::Roll => d.roll_i,
-                    PidAxis::Pitch => d.pitch_i,
-                    PidAxis::Yaw => d.yaw_i,
-                };
-                [d.timestamp as f64 / 1000.0, val as f64]
-            })
-            .collect()
-    }
-
-    pub fn get_pid_d_data(&self, axis: PidAxis) -> PlotPoints {
-        self.data
-            .iter()
-            .map(|d| {
-                let val = match axis {
-                    PidAxis::Roll => d.roll_d,
-                    PidAxis::Pitch => d.pitch_d,
-                    PidAxis::Yaw => d.yaw_d,
-                };
-                [d.timestamp as f64 / 1000.0, val as f64]
-            })
-            .collect()
-    }
 }

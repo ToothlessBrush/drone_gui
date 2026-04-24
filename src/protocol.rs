@@ -5,7 +5,6 @@ use crate::app::CommandQueue;
 // Binary protocol type bytes - matches bluetooth.h BT_CMD_* constants
 const BT_CMD_CALIBRATE: u8 = 0x01;
 const BT_CMD_SET_PID: u8 = 0x02;
-const BT_CMD_SET_MOTOR_BIAS: u8 = 0x03;
 const BT_CMD_CONFIG: u8 = 0x04;
 const BT_CMD_SAVE: u8 = 0x05;
 
@@ -36,58 +35,16 @@ pub struct PIDTunePacket {
     pub axis: u8,
 }
 
-#[repr(C, packed)]
-#[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
-pub struct MotorBiasPacket {
-    pub motor1: f32,
-    pub motor2: f32,
-    pub motor3: f32,
-    pub motor4: f32,
-}
-
+/// Flight configuration: throttle curve and angle sensitivity.
+/// Matches firmware CommandConfig struct (20 bytes).
 #[repr(C, packed)]
 #[derive(Pod, Zeroable, Clone, Copy, Debug, PartialEq)]
 pub struct ConfigPacket {
-    // motor bias
-    pub motor1: f32,
-    pub motor2: f32,
-    pub motor3: f32,
-    pub motor4: f32,
-
-    // PID terms for roll
-    pub roll_kp: f32,
-    pub roll_ki: f32,
-    pub roll_kd: f32,
-    pub roll_i_limit: f32,
-    pub roll_pid_limit: f32,
-
-    // PID terms for pitch
-    pub pitch_kp: f32,
-    pub pitch_ki: f32,
-    pub pitch_kd: f32,
-    pub pitch_i_limit: f32,
-    pub pitch_pid_limit: f32,
-
-    // PID terms for yaw
-    pub yaw_kp: f32,
-    pub yaw_ki: f32,
-    pub yaw_kd: f32,
-    pub yaw_i_limit: f32,
-    pub yaw_pid_limit: f32,
-
-    // PID terms for velocity x
-    pub velocity_x_kp: f32,
-    pub velocity_x_ki: f32,
-    pub velocity_x_kd: f32,
-    pub velocity_x_i_limit: f32,
-    pub velocity_x_pid_limit: f32,
-
-    // PID terms for velocity y
-    pub velocity_y_kp: f32,
-    pub velocity_y_ki: f32,
-    pub velocity_y_kd: f32,
-    pub velocity_y_i_limit: f32,
-    pub velocity_y_pid_limit: f32,
+    pub throttle_hover: f32,
+    pub throttle_expo: f32,
+    pub max_roll_angle: f32,
+    pub max_pitch_angle: f32,
+    pub max_yaw_rate: f32,
 }
 
 pub struct PIDController {
@@ -114,7 +71,6 @@ pub enum SelectPID {
 pub enum CommandType {
     Calibrate,
     TunePID(PIDTunePacket),
-    SetMotorBias(MotorBiasPacket),
     Config(ConfigPacket),
     Save,
 }
@@ -125,7 +81,6 @@ impl CommandType {
         let (type_byte, payload): (u8, &[u8]) = match self {
             CommandType::Calibrate => (BT_CMD_CALIBRATE, &[]),
             CommandType::TunePID(p) => (BT_CMD_SET_PID, bytemuck::bytes_of(p)),
-            CommandType::SetMotorBias(m) => (BT_CMD_SET_MOTOR_BIAS, bytemuck::bytes_of(m)),
             CommandType::Config(c) => (BT_CMD_CONFIG, bytemuck::bytes_of(c)),
             CommandType::Save => (BT_CMD_SAVE, &[]),
         };
@@ -161,19 +116,6 @@ pub fn send_command_tune_pid(
         i_limit: pid.i_limit,
         pid_limit: pid.pid_limit,
         axis: axis as u8,
-    }));
-    Ok(())
-}
-
-pub fn send_command_set_motor_bias(
-    queue: &CommandQueue,
-    motor_biases: [f32; 4],
-) -> Result<(), String> {
-    queue.enqueue(CommandType::SetMotorBias(MotorBiasPacket {
-        motor1: motor_biases[0],
-        motor2: motor_biases[1],
-        motor3: motor_biases[2],
-        motor4: motor_biases[3],
     }));
     Ok(())
 }

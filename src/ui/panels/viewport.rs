@@ -81,6 +81,36 @@ pub fn render_viewport_section(ui: &mut egui::Ui, state: &AppState, width: f32) 
                         });
 
                         ui.add_space(4.0);
+
+                        // Gyro rates
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Gyro: {:.1} / {:.1} / {:.1} rad/s",
+                                latest.gyro_x, latest.gyro_y, latest.gyro_z
+                            ))
+                            .monospace()
+                            .color(Color32::GRAY),
+                        );
+
+                        // Velocity
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Vel: {:.2} / {:.2} m/s",
+                                latest.vel_x, latest.vel_y
+                            ))
+                            .monospace()
+                            .color(Color32::GRAY),
+                        );
+
+                        // Height
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Height: {:.2} m",
+                                latest.height
+                            ))
+                            .monospace()
+                            .color(Color32::from_rgb(255, 255, 100)),
+                        );
                     });
                 } else {
                     ui.label("No data received yet");
