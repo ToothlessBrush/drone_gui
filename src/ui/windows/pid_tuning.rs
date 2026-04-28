@@ -67,6 +67,11 @@ fn render_axis_selection(ui: &mut egui::Ui, persistent_settings: &mut Persistent
             protocol::SelectPID::VelocityY,
             "Velocity Y",
         );
+        ui.selectable_value(
+            &mut persistent_settings.selected_tune_axis,
+            protocol::SelectPID::VelocityZ,
+            "Velocity Z",
+        );
     });
 }
 

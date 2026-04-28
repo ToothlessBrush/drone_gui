@@ -39,6 +39,8 @@ pub struct PersistentSettings {
     pub pid_velocity_x: PidParameters,
     #[serde(default)]
     pub pid_velocity_y: PidParameters,
+    #[serde(default)]
+    pub pid_velocity_z: PidParameters,
 
     // Flight config: throttle curve + angle sensitivity
     #[serde(default = "default_throttle_hover")]
@@ -57,11 +59,21 @@ pub struct PersistentSettings {
     pub selected_tune_axis: protocol::SelectPID,
 }
 
-fn default_throttle_hover() -> f32 { 0.45 }
-fn default_throttle_expo() -> f32 { 0.6 }
-fn default_max_roll_angle() -> f32 { 0.5 }
-fn default_max_pitch_angle() -> f32 { 0.5 }
-fn default_max_yaw_rate() -> f32 { 1.571 }
+fn default_throttle_hover() -> f32 {
+    0.45
+}
+fn default_throttle_expo() -> f32 {
+    0.6
+}
+fn default_max_roll_angle() -> f32 {
+    0.5
+}
+fn default_max_pitch_angle() -> f32 {
+    0.5
+}
+fn default_max_yaw_rate() -> f32 {
+    1.571
+}
 
 impl Default for PersistentSettings {
     fn default() -> Self {
@@ -71,6 +83,7 @@ impl Default for PersistentSettings {
             pid_yaw: PidParameters::default(),
             pid_velocity_x: PidParameters::default(),
             pid_velocity_y: PidParameters::default(),
+            pid_velocity_z: PidParameters::default(),
             throttle_hover: default_throttle_hover(),
             throttle_expo: default_throttle_expo(),
             max_roll_angle: default_max_roll_angle(),
@@ -129,6 +142,7 @@ impl PersistentSettings {
             protocol::SelectPID::Yaw => &self.pid_yaw,
             protocol::SelectPID::VelocityX => &self.pid_velocity_x,
             protocol::SelectPID::VelocityY => &self.pid_velocity_y,
+            protocol::SelectPID::VelocityZ => &self.pid_velocity_z,
         }
     }
 
@@ -139,6 +153,7 @@ impl PersistentSettings {
             protocol::SelectPID::Yaw => &mut self.pid_yaw,
             protocol::SelectPID::VelocityX => &mut self.pid_velocity_x,
             protocol::SelectPID::VelocityY => &mut self.pid_velocity_y,
+            protocol::SelectPID::VelocityZ => &mut self.pid_velocity_z,
         }
     }
 

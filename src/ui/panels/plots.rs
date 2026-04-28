@@ -41,6 +41,16 @@ fn plot_peaks(plot_ui: &mut egui_plot::PlotUi, data: &[[f64; 2]], color: Color32
     }
 }
 
+/// True when the buffer has at least two distinct timestamps — egui_plot 0.29
+/// panics with "Bad final plot bounds" if x_min == x_max.
+fn has_plottable_range(data: &std::collections::VecDeque<crate::telemetry::TelemetryData>) -> bool {
+    if data.len() < 2 {
+        return false;
+    }
+    let first = data.front().unwrap().timestamp;
+    data.iter().any(|d| d.timestamp != first)
+}
+
 /// Renders the attitude plot (Roll, Pitch, Yaw)
 pub fn render_attitude_plot(ui: &mut egui::Ui, state: &AppState) {
     let max_width = ui.ctx().screen_rect().width() - 32.0;
@@ -49,6 +59,10 @@ pub fn render_attitude_plot(ui: &mut egui::Ui, state: &AppState) {
         ui.set_max_width(max_width - 16.0);
         ui.label("Attitude (Roll, Pitch, Yaw)");
         let buffer = state.data_buffer.lock().unwrap();
+        if !has_plottable_range(&buffer.data) {
+            ui.label("Waiting for telemetry…");
+            return;
+        }
         let plot_height = (ui.ctx().screen_rect().height() * 0.25).min(300.0);
         let plot_width = ui.available_width();
 
@@ -88,6 +102,10 @@ pub fn render_gyro_plot(ui: &mut egui::Ui, state: &AppState) {
         ui.set_max_width(max_width - 16.0);
         ui.label("Gyro Rates (deg/s)");
         let buffer = state.data_buffer.lock().unwrap();
+        if !has_plottable_range(&buffer.data) {
+            ui.label("Waiting for telemetry…");
+            return;
+        }
         let plot_height = (ui.ctx().screen_rect().height() * 0.20).min(200.0);
         let plot_width = ui.available_width();
 
@@ -122,6 +140,10 @@ pub fn render_velocity_plot(ui: &mut egui::Ui, state: &AppState) {
         ui.set_max_width(max_width - 16.0);
         ui.label("Velocity (m/s) & Height (m)");
         let buffer = state.data_buffer.lock().unwrap();
+        if !has_plottable_range(&buffer.data) {
+            ui.label("Waiting for telemetry…");
+            return;
+        }
         let plot_height = (ui.ctx().screen_rect().height() * 0.20).min(200.0);
         let plot_width = ui.available_width();
 
@@ -155,6 +177,10 @@ pub fn render_motor_plot(ui: &mut egui::Ui, state: &AppState) {
         ui.set_max_width(max_width - 16.0);
         ui.label("Motor Outputs (0-1)");
         let buffer = state.data_buffer.lock().unwrap();
+        if !has_plottable_range(&buffer.data) {
+            ui.label("Waiting for telemetry…");
+            return;
+        }
         let plot_height = (ui.ctx().screen_rect().height() * 0.20).min(200.0);
         let plot_width = ui.available_width();
 
@@ -210,6 +236,10 @@ pub fn render_pid_plot(ui: &mut egui::Ui, state: &mut AppState) {
         ui.label(format!("{axis_name} PID Values (P, I, D)"));
 
         let buffer = state.data_buffer.lock().unwrap();
+        if !has_plottable_range(&buffer.data) {
+            ui.label("Waiting for telemetry…");
+            return;
+        }
         let plot_height = (ui.ctx().screen_rect().height() * 0.20).min(200.0);
         let plot_width = ui.available_width();
 

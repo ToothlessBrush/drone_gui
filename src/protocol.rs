@@ -64,6 +64,7 @@ pub enum SelectPID {
     Yaw = 0x2,
     VelocityX = 0x3,
     VelocityY = 0x4,
+    VelocityZ = 0x5,
 }
 
 /// Commands supported over Bluetooth serial - matches BT_CMD_* in bluetooth.h
